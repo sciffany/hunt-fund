@@ -26,10 +26,12 @@ const HALF_HOUR_MS = 30 * 60 * 1000;
 export type Cell = {
   /** Latest activity in ms since epoch, or null if no activity that night. */
   lastActivityMs: number | null;
-  /** Rounded-up-to-half-hour time in ms, only set if past bedtime. */
+  /** Latest activity rounded up to the next half-hour, or null if no activity. */
   roundedMs: number | null;
   /** Number of half-hours past bedtime (0 if not past bedtime). */
   halfHours: number;
+  /** True if the rounded time is strictly past this person's bedtime. */
+  overdue: boolean;
 };
 
 export type NightRow = {
@@ -157,14 +159,27 @@ export async function loadDashboardData(): Promise<DashboardData> {
     for (const person of PEOPLE) {
       const last = row.get(person) ?? null;
       const bed = bedtimeMs(person, night);
-      if (last === null || last <= bed) {
-        cells[person] = { lastActivityMs: last, roundedMs: null, halfHours: 0 };
-      } else {
-        const rounded = ceilToHalfHour(last);
-        const halfHours = Math.max(0, Math.round((rounded - bed) / HALF_HOUR_MS));
-        totals[person] += halfHours;
-        cells[person] = { lastActivityMs: last, roundedMs: rounded, halfHours };
+      if (last === null) {
+        cells[person] = {
+          lastActivityMs: null,
+          roundedMs: null,
+          halfHours: 0,
+          overdue: false,
+        };
+        continue;
       }
+      const rounded = ceilToHalfHour(last);
+      const overdue = last > bed;
+      const halfHours = overdue
+        ? Math.max(0, Math.round((rounded - bed) / HALF_HOUR_MS))
+        : 0;
+      if (overdue) totals[person] += halfHours;
+      cells[person] = {
+        lastActivityMs: last,
+        roundedMs: rounded,
+        halfHours,
+        overdue,
+      };
     }
     rows.push({ night, cells });
   }

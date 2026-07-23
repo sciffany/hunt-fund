@@ -32,7 +32,8 @@ export default async function Page() {
       <header>
         <h1>Sleep accountability</h1>
         <p className="subtitle">
-          Latest activity past bedtime, rounded up to the nearest half hour.
+          Latest activity each night, rounded up to the nearest half hour.
+          Times past bedtime are highlighted.
         </p>
         <p className="bedtimes">
           Bedtimes:{" "}
@@ -69,16 +70,19 @@ export default async function Page() {
                   <td>{formatNight(row.night)}</td>
                   {PEOPLE.map((p) => {
                     const cell = row.cells[p];
-                    if (cell.roundedMs !== null) {
+                    if (cell.roundedMs === null) {
                       return (
-                        <td key={p} className="time overdue">
-                          {formatSGT(cell.roundedMs)}
+                        <td key={p} className="time muted">
+                          —
                         </td>
                       );
                     }
                     return (
-                      <td key={p} className="time muted">
-                        —
+                      <td
+                        key={p}
+                        className={`time${cell.overdue ? " overdue" : ""}`}
+                      >
+                        {formatSGT(cell.roundedMs)}
                       </td>
                     );
                   })}

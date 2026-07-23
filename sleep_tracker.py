@@ -20,6 +20,7 @@ import atexit
 import logging
 import os
 import signal
+import socket
 import sys
 import threading
 import uuid
@@ -31,10 +32,13 @@ from supabase import Client, create_client
 
 load_dotenv()
 
-try:
-    sys.stdout.reconfigure(line_buffering=True)
-except AttributeError:
-    pass
+# Under pythonw.exe on Windows, sys.stdout / sys.stderr are None. Guard the
+# line-buffering tweak so the process doesn't crash before logging is set up.
+if sys.stdout is not None:
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except AttributeError:
+        pass
 
 
 def _require_env(name: str) -> str:
@@ -47,7 +51,7 @@ def _require_env(name: str) -> str:
 
 SUPABASE_URL = _require_env("SUPABASE_URL")
 SUPABASE_KEY = _require_env("SUPABASE_KEY")
-USER_NAME = os.environ.get("USER_NAME") or os.uname().nodename
+USER_NAME = os.environ.get("USER_NAME") or socket.gethostname()
 TABLE_NAME = os.environ.get("SLEEP_TRACKER_TABLE", "sleep_events")
 
 # Local-time window during which activity events are recorded.
@@ -62,11 +66,16 @@ FLUSH_INTERVAL_SECONDS = int(os.environ.get("FLUSH_INTERVAL_SECONDS", "30"))
 
 LOG_FILE = os.environ.get("SLEEP_TRACKER_LOG")
 
-# Route logs to stdout (so launchd's StandardOutPath gets them) unless a
-# specific file is requested via SLEEP_TRACKER_LOG.
-_handlers: list[logging.Handler] = (
-    [logging.FileHandler(LOG_FILE)] if LOG_FILE else [logging.StreamHandler(sys.stdout)]
-)
+# Route logs to a file if SLEEP_TRACKER_LOG is set, else to stdout (so launchd's
+# StandardOutPath picks them up). Under pythonw.exe on Windows sys.stdout is
+# None, so fall back to a NullHandler to avoid crashing at import time — set
+# SLEEP_TRACKER_LOG in the scheduled task to actually get logs on Windows.
+if LOG_FILE:
+    _handlers: list[logging.Handler] = [logging.FileHandler(LOG_FILE)]
+elif sys.stdout is not None:
+    _handlers = [logging.StreamHandler(sys.stdout)]
+else:
+    _handlers = [logging.NullHandler()]
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",

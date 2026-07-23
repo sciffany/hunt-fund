@@ -81,7 +81,7 @@ show the rows.
   `<repo>/.venv/bin/python` (see step 3 above) and then
   `launchctl kickstart -k gui/$(id -u)/com.sleeptracker.agent`.
 
-## Managing the agent
+## Managing the agent (macOS)
 
 ```bash
 # stop
@@ -103,6 +103,104 @@ launchctl list | grep com.sleeptracker.agent
 Stopping the agent via `launchctl unload` sends SIGTERM, which fires
 the `app_close` handler before the process exits — so intentional
 shutdowns get logged.
+
+## Windows
+
+The Python script itself is cross-platform — `pynput` and `supabase-py`
+both support Windows. `install-windows.ps1` is the equivalent of
+`install-macos.sh`: it creates the venv, installs `requirements.txt`,
+writes a VBS wrapper, and registers a per-user scheduled task that
+launches `pythonw.exe sleep_tracker.py` at every logon.
+
+### 1. Prereqs
+
+- Python 3.10+ from [python.org](https://www.python.org/downloads/windows/)
+  (make sure "Add python.exe to PATH" is checked, or that the `py`
+  launcher is available).
+- A `.env` file in the repo root (`Copy-Item .env.example .env`, then
+  edit `SUPABASE_URL`, `SUPABASE_KEY`, and `USER_NAME`).
+
+### 2. Install
+
+From an ordinary (non-admin) PowerShell in the repo root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-windows.ps1
+```
+
+That script:
+
+1. Creates `.venv\` and installs `requirements.txt` into it.
+2. Writes `run-sleep-tracker.vbs` next to the script — this is what
+   the task actually launches (via `wscript.exe`), so nothing flashes
+   a console window at logon.
+3. Registers a scheduled task named `SleepTracker` under your user
+   account with an "At log on" trigger, then starts it right away.
+
+Unlike macOS, Windows does **not** require any Accessibility-style
+permission for `pynput` to observe input — it uses low-level hooks.
+Some antivirus tools may still flag it (it looks like a keylogger even
+though only *that* input happened is recorded, never *what*).
+
+### 3. Verify
+
+Logs go to `%LOCALAPPDATA%\SleepTracker\sleep_tracker.log`:
+
+```powershell
+Get-Content -Wait "$env:LOCALAPPDATA\SleepTracker\sleep_tracker.log"
+```
+
+You should see an `app_start` line, then `activity` lines every 30s
+while you move the mouse (after 8pm). In Supabase,
+`select * from sleep_events order by event_time desc limit 20;` should
+show the rows.
+
+### 4. Managing the agent (Windows)
+
+```powershell
+# stop
+Stop-ScheduledTask       -TaskName 'SleepTracker'
+
+# start
+Start-ScheduledTask      -TaskName 'SleepTracker'
+
+# restart
+Stop-ScheduledTask -TaskName 'SleepTracker'; Start-ScheduledTask -TaskName 'SleepTracker'
+
+# status (LastRunTime, LastTaskResult, NextRunTime)
+Get-ScheduledTask        -TaskName 'SleepTracker' | Get-ScheduledTaskInfo
+
+# uninstall
+powershell -ExecutionPolicy Bypass -File .\uninstall-windows.ps1
+```
+
+`Stop-ScheduledTask` only stops the `wscript.exe` wrapper — the
+detached `pythonw.exe` child keeps running. `uninstall-windows.ps1`
+kills any leftover `pythonw.exe sleep_tracker.py` processes as well
+as removing the task and the VBS wrapper. To stop the agent without
+uninstalling, kill it directly:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" |
+    Where-Object { $_.CommandLine -match 'sleep_tracker.py' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+### Troubleshooting (Windows)
+
+- No log file appears — the task ran but Python crashed before
+  configuring logging. Check the task's `LastTaskResult` via
+  `Get-ScheduledTask 'SleepTracker' | Get-ScheduledTaskInfo`. Then run
+  the script in the foreground to see the traceback:
+  `.\.venv\Scripts\python.exe .\sleep_tracker.py`
+- `app_close` never appears at shutdown — Windows terminates
+  `pythonw.exe` on logoff without a chance to run `atexit`, so clean
+  shutdowns aren't always logged. `app_start` at the next logon is the
+  reliable signal that the previous session ended.
+- `Register-ScheduledTask : Access is denied` — you're trying to
+  register under a different user. The install script scopes the task
+  to `$env:USERNAME`; run it from the account that will actually be
+  logging in.
 
 ## Running in the foreground (for testing)
 
@@ -135,13 +233,6 @@ from sleep_nights
 where night = current_date - 1
 order by last_activity desc;
 ```
-
-## Windows (later)
-
-The Python script itself is cross-platform — `pynput` and `supabase-py`
-both support Windows. Only the install script is macOS-specific. On
-Windows the equivalent is a scheduled task with trigger "At log on"
-running `pythonw.exe sleep_tracker.py` from the venv. Not included yet.
 
 ## Privacy notes
 

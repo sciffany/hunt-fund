@@ -1,0 +1,151 @@
+# sleep_tracker
+
+Tiny background agent that logs the latest mouse/keyboard activity between
+8pm and 8am to a shared Supabase table, so two people can keep each other
+accountable for going to bed.
+
+The tracker never records *what* keys are pressed — only *that* something
+happened, plus the timestamp.
+
+## What it logs
+
+| event       | when                                                                   |
+|-------------|------------------------------------------------------------------------|
+| `app_start` | when the tracker starts (always)                                       |
+| `activity`  | timestamp of most recent input, flushed at most every 30s, only in-window |
+| `app_close` | when the tracker exits cleanly (always) — SIGTERM, SIGINT, or SIGHUP   |
+
+Each event also carries a `session_id` (UUID per run) and a `user_name`
+so both people writing into the same table are distinguishable.
+
+## Setup
+
+### 1. Supabase
+
+Create a Supabase project (or use an existing one). In the SQL editor,
+run [`schema.sql`](./schema.sql). It creates a `sleep_events` table,
+two indexes, an RLS policy that lets the anon key insert/read, and a
+`sleep_nights` view that summarises each night.
+
+Grab the project URL and anon key from Project Settings → API.
+
+### 2. Configure
+
+```bash
+cp .env.example .env
+# then edit .env with your SUPABASE_URL, SUPABASE_KEY, and USER_NAME
+```
+
+`USER_NAME` should be different on each machine (e.g. `"alex"` and `"sam"`).
+
+### 3. Install as a background service (macOS)
+
+```bash
+./install-macos.sh
+```
+
+That script:
+
+1. Creates `.venv/` and installs `requirements.txt` into it.
+2. Writes `~/Library/LaunchAgents/com.sleeptracker.agent.plist`.
+3. Loads it with `launchctl`, which starts it now and every login.
+
+On first launch macOS will prompt for **Accessibility** permission for
+the Python binary. If it doesn't prompt, add it manually:
+
+- System Settings → Privacy & Security → Accessibility
+- `+` and select `<repo>/.venv/bin/python`
+- Then: `launchctl kickstart -k gui/$(id -u)/com.sleeptracker.agent`
+
+### 4. Verify
+
+```bash
+tail -F ~/Library/Logs/sleep_tracker.out.log ~/Library/Logs/sleep_tracker.err.log
+```
+
+`out.log` gets the app's own log lines; `err.log` gets Python tracebacks
+if anything crashes. You should see an `app_start` line, then `activity`
+lines every 30s while you move the mouse (after 8pm). In Supabase,
+`select * from sleep_events order by event_time desc limit 20;` should
+show the rows.
+
+### Troubleshooting
+
+- `HTTP/2 401 Unauthorized` / `Invalid API key` — the `SUPABASE_KEY` in
+  `.env` is wrong or truncated. Copy the full `anon` `public` key from
+  Supabase → Project Settings → API.
+- `relation "sleep_events" does not exist` — you haven't run
+  `schema.sql` yet. Paste it into the Supabase SQL editor.
+- `This process is not trusted! Input event monitoring will not be
+  possible...` — you need to grant Accessibility to
+  `<repo>/.venv/bin/python` (see step 3 above) and then
+  `launchctl kickstart -k gui/$(id -u)/com.sleeptracker.agent`.
+
+## Managing the agent
+
+```bash
+# stop
+launchctl unload ~/Library/LaunchAgents/com.sleeptracker.agent.plist
+
+# start
+launchctl load   ~/Library/LaunchAgents/com.sleeptracker.agent.plist
+
+# restart
+launchctl kickstart -k gui/$(id -u)/com.sleeptracker.agent
+
+# status
+launchctl list | grep com.sleeptracker.agent
+
+# uninstall
+./uninstall-macos.sh
+```
+
+Stopping the agent via `launchctl unload` sends SIGTERM, which fires
+the `app_close` handler before the process exits — so intentional
+shutdowns get logged.
+
+## Running in the foreground (for testing)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python sleep_tracker.py
+# Ctrl-C to log app_close and exit
+```
+
+## Env vars
+
+| var                    | default        | notes                                       |
+|------------------------|----------------|---------------------------------------------|
+| `SUPABASE_URL`         | required       | project URL                                 |
+| `SUPABASE_KEY`         | required       | anon or service_role key                    |
+| `USER_NAME`            | hostname       | how this machine appears in the DB          |
+| `SLEEP_TRACKER_TABLE`  | `sleep_events` | table name                                  |
+| `WINDOW_START_HOUR`    | `20`           | local-hour when activity logging turns on   |
+| `WINDOW_END_HOUR`      | `8`            | local-hour when activity logging turns off  |
+| `FLUSH_INTERVAL_SECONDS` | `30`         | max frequency of `activity` rows            |
+| `SLEEP_TRACKER_LOG`    | stdout         | optional local log file path                |
+
+## Querying who was up last night
+
+```sql
+select user_name, night, last_activity
+from sleep_nights
+where night = current_date - 1
+order by last_activity desc;
+```
+
+## Windows (later)
+
+The Python script itself is cross-platform — `pynput` and `supabase-py`
+both support Windows. Only the install script is macOS-specific. On
+Windows the equivalent is a scheduled task with trigger "At log on"
+running `pythonw.exe sleep_tracker.py` from the venv. Not included yet.
+
+## Privacy notes
+
+- Nothing about the *content* of input is captured, only the timestamps.
+- The event stream reveals when you're at the keyboard, so treat the
+  Supabase table like personal data (RLS + short retention are a good
+  idea for anything shared beyond two trusted people).

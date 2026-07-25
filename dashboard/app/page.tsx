@@ -1,21 +1,16 @@
 import {
   PEOPLE,
   RATE_SGD_PER_HALF_HOUR,
+  bedtimeSummary,
   formatNight,
   formatSGT,
   loadDashboardData,
 } from "@/lib/data";
+import RefreshButton from "./RefreshButton";
 
 // Always render on request so the numbers are fresh.
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
-
-const BEDTIME_LABELS: Record<(typeof PEOPLE)[number], string> = {
-  sample: "10:00 PM",
-  tiffany: "11:30 PM",
-  sophia: "1:00 AM",
-  yipin: "2:00 AM",
-};
 
 export default async function Page() {
   const data = await loadDashboardData();
@@ -33,16 +28,35 @@ export default async function Page() {
         <h1>Sleep accountability</h1>
         <p className="subtitle">
           Latest activity each night, rounded up to the nearest half hour.
-          Times past bedtime are highlighted.
+          Times past bedtime are highlighted. Hit{" "}
+          <span className="refresh inline" aria-hidden>
+            <span className="refresh-icon">↻</span>
+          </span>{" "}
+          beside a date to recompute it from the raw events.
         </p>
         <p className="bedtimes">
           Bedtimes:{" "}
-          {PEOPLE.map((p, i) => (
-            <span key={p}>
-              {i > 0 && " · "}
-              <strong>{p}</strong> {BEDTIME_LABELS[p]}
-            </span>
-          ))}
+          {PEOPLE.map((p, i) => {
+            const { main, exceptions } = bedtimeSummary(p);
+            return (
+              <span key={p}>
+                {i > 0 && " · "}
+                <strong>{p}</strong> {main}
+                {exceptions.length > 0 && (
+                  <>
+                    {" ("}
+                    {exceptions.map((e, j) => (
+                      <span key={e.day}>
+                        {j > 0 && ", "}
+                        {e.day} {e.label}
+                      </span>
+                    ))}
+                    {")"}
+                  </>
+                )}
+              </span>
+            );
+          })}
         </p>
       </header>
 
@@ -67,7 +81,15 @@ export default async function Page() {
             <tbody>
               {data.rows.map((row) => (
                 <tr key={row.night}>
-                  <td>{formatNight(row.night)}</td>
+                  <td>
+                    <span className="night-label">
+                      {formatNight(row.night)}
+                    </span>
+                    <RefreshButton
+                      night={row.night}
+                      refreshedAt={row.refreshedAt}
+                    />
+                  </td>
                   {PEOPLE.map((p) => {
                     const cell = row.cells[p];
                     if (cell.roundedMs === null) {

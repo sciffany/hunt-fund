@@ -150,3 +150,60 @@ footer {
   font-size: 12px;
   text-align: right;
 }
+
+.night-label {
+  margin-right: 8px;
+}
+
+.refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  vertical-align: -4px;
+}
+
+.refresh:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: #cfcdc4;
+  background: #faf9f5;
+}
+
+.refresh:disabled {
+  cursor: progress;
+  color: var(--muted);
+}
+
+.refresh.inline {
+  cursor: default;
+  vertical-align: -5px;
+}
+
+.refresh-error {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.refresh-icon {
+  display: inline-block;
+  transform-origin: 50% 50%;
+}
+
+.refresh-icon.spinning {
+  animation: refresh-spin 900ms linear infinite;
+}
+
+@keyframes refresh-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}

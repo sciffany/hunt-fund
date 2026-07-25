@@ -1,7 +1,8 @@
 # Sleep Accountability Dashboard
 
-Minimal Next.js dashboard that reads `sleep_events` from Supabase and shows,
-per night, how late each person stayed up past their bedtime.
+Minimal Next.js dashboard that reads the pre-aggregated `sleep_nights` table
+from Supabase and shows, per night, how late each person stayed up past their
+bedtime.
 
 - **Rows** — nights (anchored to their evening date in Singapore time)
 - **Columns** — sample, tiffany, sophia, yipin
@@ -10,6 +11,11 @@ per night, how late each person stayed up past their bedtime.
   time)
 - **Total half-hours** — sum of half-hours past bedtime per person
 - **Owed (SGD)** — half-hours × 1.50 SGD
+- **↻ beside a date** — recomputes that night by scanning the raw
+  `sleep_events` for its SGT window and upserting one row per person into
+  `sleep_nights`. The table (not the raw event stream) is the source of
+  truth the dashboard renders from, so it isn't limited by PostgREST's
+  per-request row cap.
 
 Bedtimes (SGT):
 
@@ -56,9 +62,12 @@ vercel --prod
 
 ## Notes
 
-- Data comes straight from `sleep_events` via the Supabase REST API — no
-  extra schema needed beyond what's already in `../schema.sql`.
+- The dashboard reads from `sleep_nights` (populated by clicking ↻).
+  Recomputation and upsert happen in the `refreshNight` server action in
+  `lib/actions.ts`, which uses the same Supabase env vars.
 - A "night" is anchored to the date its evening starts (SGT). Anything before
   noon SGT rolls into the previous night's row.
 - Rounding is strictly *up* to the next 30-minute mark, so anyone still active
   past their bedtime is on the hook for at least one half-hour.
+- The last 14 nights always render, even if they haven't been refreshed yet,
+  so there's always a ↻ button waiting to be clicked for a new night.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Sleep accountability tracker.
 
-Logs the latest mouse/keyboard activity between 8pm and 8am (local time)
+Logs the latest mouse/keyboard activity between 8pm and 6am (local time)
 to a Supabase table so a partner/roommate can hold you accountable.
 
 Events logged:
@@ -57,7 +57,7 @@ TABLE_NAME = os.environ.get("SLEEP_TRACKER_TABLE", "sleep_events")
 # Local-time window during which activity events are recorded.
 # Window wraps midnight when START > END.
 WINDOW_START_HOUR = int(os.environ.get("WINDOW_START_HOUR", "20"))  # 8pm
-WINDOW_END_HOUR = int(os.environ.get("WINDOW_END_HOUR", "8"))       # 8am
+WINDOW_END_HOUR = int(os.environ.get("WINDOW_END_HOUR", "6"))       # 6am
 
 # Max frequency for writing "activity" rows. We only ever record the *latest*
 # activity timestamp seen in the last interval, so we get one row per interval

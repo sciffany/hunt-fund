@@ -1,4 +1,4 @@
--- Run this once in your Supabase SQL editor.
+-- Run this once in your Supabase SQL editor. Safe to re-run.
 
 create table if not exists public.sleep_events (
     id          bigint generated always as identity primary key,
@@ -15,28 +15,62 @@ create index if not exists sleep_events_user_time_idx
 create index if not exists sleep_events_type_time_idx
     on public.sleep_events (event_type, event_time desc);
 
--- Handy view: latest activity per user per "night"
--- (nights are anchored at noon, so a 2am event belongs to the previous day).
-create or replace view public.sleep_nights as
-select
-    user_name,
-    (date_trunc('day', event_time - interval '12 hours'))::date as night,
-    min(event_time) filter (where event_type = 'app_start')  as first_seen,
-    max(event_time) filter (where event_type = 'activity')   as last_activity,
-    max(event_time) filter (where event_type = 'app_close')  as last_close
-from public.sleep_events
-group by 1, 2;
+-- Cached per-night summary: one row per (user, night). The dashboard reads
+-- from here so it never has to scan the full sleep_events stream (PostgREST
+-- caps row responses, so aggregating client-side over sleep_events silently
+-- drops the most recent nights once the table grows).
+--
+-- Rows are (re)populated by the dashboard's per-row "refresh" button, which
+-- recomputes MAX(event_time) over the SGT-anchored night window and upserts
+-- here. See dashboard/lib/actions.ts.
+--
+-- The previous schema exposed sleep_nights as a VIEW; the drop below migrates
+-- existing installs.
+drop view if exists public.sleep_nights;
+
+create table if not exists public.sleep_nights (
+    user_name     text        not null,
+    night         date        not null,
+    last_activity timestamptz,
+    updated_at    timestamptz not null default now(),
+    primary key (user_name, night)
+);
+
+create index if not exists sleep_nights_night_idx
+    on public.sleep_nights (night desc);
 
 -- Enable Row Level Security. Adjust policies to your setup.
--- If both machines use the anon key, this policy lets them insert:
 alter table public.sleep_events enable row level security;
+alter table public.sleep_nights enable row level security;
 
+-- Policies are drop-then-create so this file is safe to re-run.
+drop policy if exists "anyone can insert sleep events" on public.sleep_events;
 create policy "anyone can insert sleep events"
     on public.sleep_events for insert
     to anon, authenticated
     with check (true);
 
+drop policy if exists "anyone can read sleep events" on public.sleep_events;
 create policy "anyone can read sleep events"
     on public.sleep_events for select
     to anon, authenticated
     using (true);
+
+drop policy if exists "anyone can read sleep nights" on public.sleep_nights;
+create policy "anyone can read sleep nights"
+    on public.sleep_nights for select
+    to anon, authenticated
+    using (true);
+
+drop policy if exists "anyone can insert sleep nights" on public.sleep_nights;
+create policy "anyone can insert sleep nights"
+    on public.sleep_nights for insert
+    to anon, authenticated
+    with check (true);
+
+drop policy if exists "anyone can update sleep nights" on public.sleep_nights;
+create policy "anyone can update sleep nights"
+    on public.sleep_nights for update
+    to anon, authenticated
+    using (true)
+    with check (true);

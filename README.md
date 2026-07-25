@@ -1,7 +1,7 @@
 # sleep_tracker
 
 Tiny background agent that logs the latest mouse/keyboard activity between
-8pm and 8am to a shared Supabase table, so two people can keep each other
+8pm and 6am to a shared Supabase table, so two people can keep each other
 accountable for going to bed.
 
 The tracker never records *what* keys are pressed — only *that* something
@@ -23,9 +23,12 @@ so both people writing into the same table are distinguishable.
 ### 1. Supabase
 
 Create a Supabase project (or use an existing one). In the SQL editor,
-run [`schema.sql`](./schema.sql). It creates a `sleep_events` table,
-two indexes, an RLS policy that lets the anon key insert/read, and a
-`sleep_nights` view that summarises each night.
+run [`schema.sql`](./schema.sql). It creates a `sleep_events` table
+(raw event stream) and a `sleep_nights` table (per-night summary that
+the dashboard reads from and its refresh button writes to), plus indexes
+and RLS policies that let the anon key insert/read/update. The file is
+safe to re-run and will migrate installs where `sleep_nights` was
+previously exposed as a view.
 
 Grab the project URL and anon key from Project Settings → API.
 
@@ -221,7 +224,7 @@ python sleep_tracker.py
 | `USER_NAME`            | hostname       | how this machine appears in the DB          |
 | `SLEEP_TRACKER_TABLE`  | `sleep_events` | table name                                  |
 | `WINDOW_START_HOUR`    | `20`           | local-hour when activity logging turns on   |
-| `WINDOW_END_HOUR`      | `8`            | local-hour when activity logging turns off  |
+| `WINDOW_END_HOUR`      | `6`            | local-hour when activity logging turns off  |
 | `FLUSH_INTERVAL_SECONDS` | `30`         | max frequency of `activity` rows            |
 | `SLEEP_TRACKER_LOG`    | stdout         | optional local log file path                |
 
@@ -232,6 +235,27 @@ select user_name, night, last_activity
 from sleep_nights
 where night = current_date - 1
 order by last_activity desc;
+```
+
+`sleep_nights` is populated by the dashboard's per-row refresh button, so
+a `night` only appears after someone has clicked ↻ for it (or you've
+inserted a row manually). To recompute from raw events directly in SQL:
+
+```sql
+insert into sleep_nights (user_name, night, last_activity, updated_at)
+select
+    user_name,
+    (date_trunc('day', event_time - interval '12 hours'))::date as night,
+    max(event_time) filter (where event_type = 'activity')      as last_activity,
+    now()
+from sleep_events
+where event_time >= (current_date - 1)::timestamptz + interval '12 hours'
+  and event_time <  (current_date    )::timestamptz + interval '12 hours'
+group by 1, 2
+on conflict (user_name, night)
+do update set
+    last_activity = excluded.last_activity,
+    updated_at    = excluded.updated_at;
 ```
 
 ## Privacy notes

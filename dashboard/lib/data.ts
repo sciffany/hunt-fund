@@ -39,8 +39,8 @@ const BEDTIME_HOURS_PAST_NOON_SGT: Record<Person, Record<DayKey, number>> = {
     tue: 11.5,
     wed: 11.5,
     thu: 11.5,
-    fri: 12.5,
-    sat: 11.5,
+    fri: 13.5,
+    sat: 13.5,
   },
   sophia: {
     sun: 13,
@@ -48,8 +48,8 @@ const BEDTIME_HOURS_PAST_NOON_SGT: Record<Person, Record<DayKey, number>> = {
     tue: 13,
     wed: 13,
     thu: 13,
-    fri: 14,
-    sat: 13,
+    fri: 15,
+    sat: 15,
   },
   yipin: {
     sun: 14.5,
@@ -57,8 +57,8 @@ const BEDTIME_HOURS_PAST_NOON_SGT: Record<Person, Record<DayKey, number>> = {
     tue: 14.5,
     wed: 14.5,
     thu: 14.5,
-    fri: 15.5,
-    sat: 14.5,
+    fri: 16.5,
+    sat: 16.5,
   },
 };
 
@@ -271,7 +271,10 @@ function recentNightKeys(n: number): string[] {
 }
 
 function emptyTotals(): Record<Person, number> {
-  return Object.fromEntries(PEOPLE.map((p) => [p, 0])) as Record<Person, number>;
+  return Object.fromEntries(PEOPLE.map((p) => [p, 0])) as Record<
+    Person,
+    number
+  >;
 }
 
 export async function loadDashboardData(): Promise<DashboardData> {

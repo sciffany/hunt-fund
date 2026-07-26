@@ -205,6 +205,66 @@ Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" |
   to `$env:USERNAME`; run it from the account that will actually be
   logging in.
 
+## Android
+
+Companion Android app in [`android/`](./android/). It runs a foreground
+service that listens for the system broadcasts
+
+- `ACTION_SCREEN_ON`
+- `ACTION_SCREEN_OFF`
+- `ACTION_USER_PRESENT`
+
+and POSTs one `phone_activity` row to `sleep_events` per broadcast — a
+phone-specific event type kept distinct from the desktop tracker's
+`activity` rows so the two sources can be filtered separately. The
+dashboard's `maxActivityFor` treats both types as "user was active", so
+phone events count toward "last activity" out of the box.
+
+All three broadcasts are protected system intents, so a manifest-declared
+receiver never fires for them; the foreground service exists to keep our
+runtime-registered receiver alive while the phone is idle.
+
+### 1. Configure
+
+```bash
+cp android/local.properties.example android/local.properties
+# then edit android/local.properties with your values:
+#   supabase.url=...
+#   supabase.key=...
+#   user.name=alex-phone
+```
+
+These are baked into `BuildConfig` at build time, so rebuild the APK if
+you change `user.name` (e.g. installing on a second phone).
+
+### 2. Build & install
+
+Open `android/` in Android Studio and Run, or from the command line with
+Android SDK + a device attached:
+
+```bash
+cd android
+./gradlew installDebug
+```
+
+On first launch, tap **Start tracking** and accept the notification
+permission prompt on Android 13+ (needed for the ongoing foreground-
+service notification to show up; the service still runs either way).
+The app then auto-restarts after reboot or a reinstall via a
+`BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` receiver.
+
+Verify with `select * from sleep_events where user_name = 'alex-phone'
+order by event_time desc limit 20;` in the Supabase SQL editor — you
+should see a new row every time you press the power button or unlock
+the phone.
+
+### Security caveat
+
+The Supabase anon key is compiled into the APK. Anyone with the APK can
+extract it. This is the same trust level as `.env` on the desktop
+tracker — fine when RLS on `sleep_events` limits the anon role to
+insert/select on this one table, but worth calling out.
+
 ## Running in the foreground (for testing)
 
 ```bash
@@ -246,7 +306,7 @@ insert into sleep_nights (user_name, night, last_activity, updated_at)
 select
     user_name,
     (date_trunc('day', event_time - interval '12 hours'))::date as night,
-    max(event_time) filter (where event_type = 'activity')      as last_activity,
+    max(event_time) filter (where event_type in ('activity', 'phone_activity')) as last_activity,
     now()
 from sleep_events
 where event_time >= (current_date - 1)::timestamptz + interval '12 hours'

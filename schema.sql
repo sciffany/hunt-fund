@@ -3,11 +3,19 @@
 create table if not exists public.sleep_events (
     id          bigint generated always as identity primary key,
     user_name   text        not null,
-    event_type  text        not null check (event_type in ('app_start', 'activity', 'app_close')),
+    event_type  text        not null check (event_type in ('app_start', 'activity', 'app_close', 'phone_activity')),
     event_time  timestamptz not null default now(),
     session_id  uuid,
     created_at  timestamptz not null default now()
 );
+
+-- Migrate existing installs where the constraint was created before
+-- 'phone_activity' was allowed. Safe on fresh installs (drop is a no-op).
+alter table public.sleep_events
+    drop constraint if exists sleep_events_event_type_check;
+alter table public.sleep_events
+    add  constraint sleep_events_event_type_check
+    check (event_type in ('app_start', 'activity', 'app_close', 'phone_activity'));
 
 create index if not exists sleep_events_user_time_idx
     on public.sleep_events (user_name, event_time desc);

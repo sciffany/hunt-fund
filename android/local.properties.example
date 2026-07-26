@@ -1,0 +1,11 @@
+# Copy to local.properties and fill in your values.
+# This file is read at build time by android/app/build.gradle.kts and baked
+# into BuildConfig fields. Rebuild the APK to change USER_NAME per device.
+
+supabase.url=https://xxxx.supabase.co
+supabase.key=eyJhbGciOi...
+user.name=alex-phone
+
+# Optional. Point at your local Android SDK. Android Studio writes this
+# automatically the first time you open the project.
+#sdk.dir=/Users/you/Library/Android/sdk

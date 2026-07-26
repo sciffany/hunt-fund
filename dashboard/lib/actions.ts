@@ -28,12 +28,15 @@ function supabaseEnv(): { url: string; key: string } {
 /**
  * Effective "last activity" time for `person` over [startIso, endIso).
  *
- * We look at the latest `activity` or `app_close` event in the window:
- *   - If it's an `activity`, we use its timestamp.
- *   - If it's an `app_close`, the tracker was shut down after the person's
- *     final activity, so we can't tell when they actually stopped being
- *     active. Treat that as "still up at the end of the tracking window"
- *     by returning 6am SGT (endIso), the maximum penalty.
+ * We look at the latest `activity`, `phone_activity`, or `app_close` event
+ * in the window:
+ *   - If it's an `activity` or `phone_activity`, we use its timestamp.
+ *     `phone_activity` rows come from the Android app's screen-state
+ *     broadcasts; `activity` rows come from the desktop tracker.
+ *   - If it's an `app_close`, the desktop tracker was shut down after the
+ *     person's final activity, so we can't tell when they actually stopped
+ *     being active. Treat that as "still up at the end of the tracking
+ *     window" by returning 6am SGT (endIso), the maximum penalty.
  *
  * Returns null if there are no relevant events in the window.
  */
@@ -46,7 +49,7 @@ async function maxActivityFor(
   const endpoint =
     `${url}/rest/v1/sleep_events` +
     `?select=event_time,event_type` +
-    `&event_type=in.(activity,app_close)` +
+    `&event_type=in.(activity,phone_activity,app_close)` +
     `&user_name=eq.${encodeURIComponent(person)}` +
     `&event_time=gte.${encodeURIComponent(startIso)}` +
     `&event_time=lt.${encodeURIComponent(endIso)}` +
@@ -67,7 +70,7 @@ async function maxActivityFor(
   }
   const rows = (await res.json()) as {
     event_time: string;
-    event_type: "activity" | "app_close";
+    event_type: "activity" | "phone_activity" | "app_close";
   }[];
   const latest = rows[0];
   if (!latest) return null;

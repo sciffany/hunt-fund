@@ -5,8 +5,12 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.util.Log
+import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -38,6 +42,9 @@ class MainActivity : AppCompatActivity() {
             stopService(Intent(this, ScreenStateService::class.java))
             refreshUi()
         }
+        binding.grantUsageAccessButton.setOnClickListener {
+            openUsageAccessSettings()
+        }
     }
 
     override fun onResume() {
@@ -62,7 +69,12 @@ class MainActivity : AppCompatActivity() {
         val configOk = BuildConfig.SUPABASE_URL.isNotBlank() &&
             BuildConfig.SUPABASE_KEY.isNotBlank()
         binding.configWarning.visibility =
-            if (configOk) android.view.View.GONE else android.view.View.VISIBLE
+            if (configOk) View.GONE else View.VISIBLE
+
+        val usageOk = UsageStatsPoller.hasPermission(this)
+        val usageVis = if (usageOk) View.GONE else View.VISIBLE
+        binding.usageAccessWarning.visibility = usageVis
+        binding.grantUsageAccessButton.visibility = usageVis
 
         val action = LastEvent.action
         val at = LastEvent.at
@@ -75,6 +87,27 @@ class MainActivity : AppCompatActivity() {
             )
         } else {
             getString(R.string.last_event_none)
+        }
+    }
+
+    private fun openUsageAccessSettings() {
+        // Try the app-specific deep link first (some OEMs honor the package
+        // URI, jumping straight to our row); fall back to the generic list.
+        val specific = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+            data = Uri.fromParts("package", packageName, null)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val generic = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            startActivity(specific)
+        } catch (_: Throwable) {
+            try {
+                startActivity(generic)
+            } catch (t: Throwable) {
+                Log.w("MainActivity", "no usage-access settings screen: ${t.message}")
+            }
         }
     }
 

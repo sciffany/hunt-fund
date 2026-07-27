@@ -4,7 +4,7 @@
     <string name="notification_channel_name">Screen state tracker</string>
     <string name="notification_channel_desc">Keeps the screen-state listener alive.</string>
     <string name="notification_title">SleepTracker running</string>
-    <string name="notification_text">Logging SCREEN_ON / SCREEN_OFF / USER_PRESENT.</string>
+    <string name="notification_text">Logging phone activity and screen on/off.</string>
     <string name="btn_start">Start tracking</string>
     <string name="btn_stop">Stop tracking</string>
     <string name="status_running">Running as %1$s</string>
@@ -12,4 +12,6 @@
     <string name="config_missing">SUPABASE_URL or SUPABASE_KEY is empty. Set them in android/local.properties and rebuild.</string>
     <string name="last_event_none">No events posted yet this session.</string>
     <string name="last_event">Last event: %1$s at %2$s</string>
+    <string name="usage_access_missing">Usage access not granted. Without it, in-app activity (e.g. scrolling) isn\'t logged while the screen stays on — only screen on/off broadcasts are.</string>
+    <string name="btn_grant_usage_access">Grant usage access</string>
 </resources>

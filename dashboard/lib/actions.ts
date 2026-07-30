@@ -6,13 +6,23 @@
 // window and upserts one row per person into sleep_nights.
 
 import { revalidatePath } from "next/cache";
-import { PEOPLE, type Person, nightWindowSGT } from "./data";
+import {
+  PEOPLE,
+  RETENTION_DAYS,
+  isNightRefreshable,
+  nightWindowSGT,
+  type Person,
+} from "./data";
 
 const NIGHT_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export type RefreshResult =
   | { ok: true; night: string; updated: number }
   | { ok: false; night: string; error: string };
+
+export type PruneResult =
+  | { ok: true; deleted: number; cutoff: string }
+  | { ok: false; error: string };
 
 function supabaseEnv(): { url: string; key: string } {
   const url = process.env.SUPABASE_URL;
@@ -113,6 +123,16 @@ export async function refreshNight(nightKey: string): Promise<RefreshResult> {
   if (!NIGHT_KEY_RE.test(nightKey)) {
     return { ok: false, night: nightKey, error: `Invalid night: ${nightKey}` };
   }
+  // Guard against overwriting a good cached sleep_nights row with a partial
+  // recompute after the raw events have been pruned. sleep_nights is the
+  // historical record for nights older than the retention window.
+  if (!isNightRefreshable(nightKey)) {
+    return {
+      ok: false,
+      night: nightKey,
+      error: `Raw events for ${nightKey} are outside the ${RETENTION_DAYS}-day retention window and have been pruned; this night is frozen.`,
+    };
+  }
   try {
     const { startMs, endMs } = nightWindowSGT(nightKey);
     const startIso = new Date(startMs).toISOString();
@@ -135,6 +155,62 @@ export async function refreshNight(nightKey: string): Promise<RefreshResult> {
     return {
       ok: false,
       night: nightKey,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+// PostgREST DELETE with `Prefer: count=exact` returns the deleted row count
+// in the `Content-Range` header (format like "0-<star>/24" or "<star>/24" —
+// spelled out because a literal star-slash would close this comment). Grab
+// whatever integer follows the final slash; return null if we can't parse.
+function parseDeletedCount(contentRange: string | null): number | null {
+  if (!contentRange) return null;
+  const idx = contentRange.lastIndexOf("/");
+  if (idx < 0) return null;
+  const n = Number.parseInt(contentRange.slice(idx + 1), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Delete rows from `sleep_events` older than the retention cutoff
+ * (now - RETENTION_DAYS). sleep_nights is untouched — its rows are the
+ * cached historical record and don't depend on sleep_events being present.
+ *
+ * The per-row refresh button is disabled for nights outside the retention
+ * window (see isNightRefreshable), so pruning can't cause a subsequent
+ * refresh click to null out a good historical row.
+ */
+export async function pruneOldEvents(): Promise<PruneResult> {
+  try {
+    const { url, key } = supabaseEnv();
+    const cutoffMs = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const cutoffIso = new Date(cutoffMs).toISOString();
+    const endpoint =
+      `${url}/rest/v1/sleep_events` +
+      `?event_time=lt.${encodeURIComponent(cutoffIso)}`;
+
+    const res = await fetch(endpoint, {
+      method: "DELETE",
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        Prefer: "return=minimal, count=exact",
+      },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: `sleep_events delete failed: ${res.status} ${await res.text()}`,
+      };
+    }
+    const deleted = parseDeletedCount(res.headers.get("content-range")) ?? 0;
+    revalidatePath("/");
+    return { ok: true, deleted, cutoff: cutoffIso };
+  } catch (err) {
+    return {
+      ok: false,
       error: err instanceof Error ? err.message : String(err),
     };
   }

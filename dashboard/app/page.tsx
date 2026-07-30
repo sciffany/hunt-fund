@@ -6,6 +6,7 @@ import {
   formatSGT,
   loadDashboardData,
 } from "@/lib/data";
+import PruneButton from "./PruneButton";
 import RefreshButton from "./RefreshButton";
 
 // Always render on request so the numbers are fresh.
@@ -25,7 +26,10 @@ export default async function Page() {
   return (
     <main>
       <header>
-        <h1>Sleep accountability</h1>
+        <div className="header-row">
+          <h1>Sleep accountability</h1>
+          <PruneButton />
+        </div>
         <p className="subtitle">
           Latest activity each night, rounded up to the nearest half hour.
           Times past bedtime are highlighted. Hit{" "}
@@ -88,6 +92,7 @@ export default async function Page() {
                     <RefreshButton
                       night={row.night}
                       refreshedAt={row.refreshedAt}
+                      refreshable={row.refreshable}
                     />
                   </td>
                   {PEOPLE.map((p) => {

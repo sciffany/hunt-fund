@@ -184,6 +184,13 @@ footer {
   color: var(--muted);
 }
 
+.refresh.refresh-frozen:disabled {
+  cursor: not-allowed;
+  color: #cfcdc4;
+  border-color: #eeece5;
+  background: transparent;
+}
+
 .refresh.inline {
   cursor: default;
   vertical-align: -5px;
@@ -206,4 +213,53 @@ footer {
 @keyframes refresh-spin {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
+}
+
+.header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.prune {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.prune:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: #cfcdc4;
+  background: #faf9f5;
+}
+
+.prune:disabled {
+  cursor: progress;
+}
+
+.prune.prune-armed {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--owed);
+}
+
+.prune.prune-done {
+  color: #2f6f3a;
+  border-color: #cfe3d0;
+  background: #eef7ef;
+}
+
+.prune.prune-error {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: #fdecea;
 }

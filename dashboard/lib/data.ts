@@ -65,11 +65,20 @@ const BEDTIME_HOURS_PAST_NOON_SGT: Record<Person, Record<DayKey, number>> = {
 export const RATE_SGD_PER_HALF_HOUR = 1.5;
 const SGT_OFFSET_MIN = 8 * 60;
 const HALF_HOUR_MS = 30 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Recent nights that always render (with a refresh button) even if they don't
 // yet have a sleep_nights row. Lets brand-new nights be populated with one
 // click; older nights only show once they've been refreshed at least once.
 const RECENT_NIGHTS_TO_SHOW = 14;
+
+// How many days of raw sleep_events we retain. The "Prune old events" button
+// deletes anything older than this; sleep_nights rows (the cached per-night
+// summaries) are the historical record and are never touched by pruning.
+//
+// Kept comfortably larger than RECENT_NIGHTS_TO_SHOW so every night the UI
+// renders with a refresh button also has its raw events still on disk.
+export const RETENTION_DAYS = 21;
 
 export type Cell = {
   /** Latest activity in ms since epoch, or null if no activity that night. */
@@ -87,6 +96,12 @@ export type NightRow = {
   night: string;
   /** Latest updated_at across this night's sleep_nights rows, or null if none. */
   refreshedAt: string | null;
+  /**
+   * True iff the raw events for this night are still within the retention
+   * window, i.e. it's safe to recompute from sleep_events. Old nights are
+   * frozen at whatever's cached in sleep_nights.
+   */
+  refreshable: boolean;
   cells: Record<Person, Cell>;
 };
 
@@ -236,6 +251,20 @@ export function nightWindowSGT(nightKey: string): {
   return { startMs, endMs: startMs + 18 * 60 * 60 * 1000 };
 }
 
+/**
+ * True iff this night's entire event window is still inside the retention
+ * cutoff (now - RETENTION_DAYS). If any of the night straddles the cutoff,
+ * we treat it as unrefreshable so a click can't overwrite a good historical
+ * sleep_nights row with a partial recompute.
+ */
+export function isNightRefreshable(
+  nightKey: string,
+  nowMs: number = Date.now(),
+): boolean {
+  const cutoffMs = nowMs - RETENTION_DAYS * DAY_MS;
+  return nightWindowSGT(nightKey).startMs >= cutoffMs;
+}
+
 function buildCell(person: Person, night: string, lastMs: number | null): Cell {
   if (lastMs === null) {
     return {
@@ -322,6 +351,7 @@ export async function loadDashboardData(): Promise<DashboardData> {
   const totals = emptyTotals();
   const rows: NightRow[] = [];
   const sortedNights = Array.from(nightSet).sort();
+  const nowMs = Date.now();
   for (const night of sortedNights) {
     const row = byNight.get(night);
     const cells = {} as Record<Person, Cell>;
@@ -331,7 +361,12 @@ export async function loadDashboardData(): Promise<DashboardData> {
       if (cell.overdue) totals[person] += cell.halfHours;
       cells[person] = cell;
     }
-    rows.push({ night, refreshedAt: refreshedAt.get(night) ?? null, cells });
+    rows.push({
+      night,
+      refreshedAt: refreshedAt.get(night) ?? null,
+      refreshable: isNightRefreshable(night, nowMs),
+      cells,
+    });
   }
 
   // Show most recent night first.

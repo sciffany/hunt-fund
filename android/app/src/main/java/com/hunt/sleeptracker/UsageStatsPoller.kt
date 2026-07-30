@@ -14,11 +14,15 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Polls [UsageStatsManager.queryEvents] on a fixed cadence and posts a
- * `phone_activity` row for the newest in-app interaction we haven't posted
- * yet. This complements [ScreenStateService]'s broadcast receiver: broadcasts
+ * `phone_activity` row for the newest true user interaction we haven't
+ * posted yet — see [ACTIVE_EVENT_TYPES] for the exact set. Activity
+ * lifecycle events like MOVE_TO_FOREGROUND are excluded because they fire
+ * overnight without any user input (see the note there).
+ *
+ * This complements [ScreenStateService]'s broadcast receiver: broadcasts
  * catch state transitions instantly but say nothing while the screen stays
  * on, so an hour of scrolling would otherwise leave "last activity" pinned
- * to the initial SCREEN_ON. Usage-stats events keep advancing it.
+ * to the initial USER_PRESENT. Usage-stats events keep advancing it.
  *
  * Requires the user to grant the `PACKAGE_USAGE_STATS` app-op via
  * Settings → Special app access → Usage access; without it, queryEvents
@@ -110,13 +114,17 @@ class UsageStatsPoller(
         // Event types we treat as "user is actively using the phone".
         // Values are stable Android constants, referenced numerically for
         // ones added after our minSdk so we don't need SDK guards here.
-        // MOVE_TO_FOREGROUND was renamed to ACTIVITY_RESUMED in API 29 but
-        // both constants resolve to the same int (1) and events keep the
-        // same value on every SDK we support, so the deprecation is safe.
-        @Suppress("DEPRECATION")
+        //
+        // MOVE_TO_FOREGROUND (=1, aka ACTIVITY_RESUMED) is deliberately NOT
+        // in this set. It's an activity-lifecycle transition, not a user
+        // action: it fires overnight from notifications lighting the lock
+        // screen, ambient / always-on-display wakes, OEM-scheduled surfaces
+        // (Google feed, Samsung DailyBoard, etc.), fingerprint/face sensor
+        // wakes, and background work that briefly surfaces an activity —
+        // all of which would otherwise be posted as phone_activity even
+        // though the user never touched the phone.
         private val ACTIVE_EVENT_TYPES: Set<Int> = setOf(
-            UsageEvents.Event.MOVE_TO_FOREGROUND, // 1 — app came to foreground
-            UsageEvents.Event.USER_INTERACTION,   // 7 — API 23+, in-app interaction
+            UsageEvents.Event.USER_INTERACTION, // 7 — API 23+, in-app touch/swipe/key
             12, // NOTIFICATION_INTERACTION — API 29+, user tapped a notification
         )
 

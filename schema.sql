@@ -64,6 +64,14 @@ create policy "anyone can read sleep events"
     to anon, authenticated
     using (true);
 
+-- The dashboard's "Prune old events" button issues a bounded DELETE
+-- (event_time < now() - RETENTION_DAYS). See dashboard/lib/actions.ts.
+drop policy if exists "anyone can delete sleep events" on public.sleep_events;
+create policy "anyone can delete sleep events"
+    on public.sleep_events for delete
+    to anon, authenticated
+    using (true);
+
 drop policy if exists "anyone can read sleep nights" on public.sleep_nights;
 create policy "anyone can read sleep nights"
     on public.sleep_nights for select

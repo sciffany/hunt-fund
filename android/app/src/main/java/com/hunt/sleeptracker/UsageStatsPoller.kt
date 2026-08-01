@@ -1,10 +1,12 @@
 package com.hunt.sleeptracker
 
 import android.app.AppOpsManager
+import android.app.KeyguardManager
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.os.Build
+import android.os.PowerManager
 import android.os.Process
 import android.util.Log
 import java.time.Instant
@@ -14,21 +16,24 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Polls [UsageStatsManager.queryEvents] on a fixed cadence and posts a
- * `phone_activity` row for the newest true user interaction we haven't
- * posted yet — see [ACTIVE_EVENT_TYPES] for the exact set. Activity
- * lifecycle events like MOVE_TO_FOREGROUND are excluded because they fire
- * overnight without any user input (see the note there).
+ * `phone_activity` row only for interactions that look like real phone use
+ * while awake — not overnight system noise.
  *
- * This complements [ScreenStateService]'s broadcast receiver: broadcasts
- * catch state transitions instantly but say nothing while the screen stays
- * on, so an hour of scrolling would otherwise leave "last activity" pinned
- * to the initial USER_PRESENT. Usage-stats events keep advancing it.
+ * A qualifying event must be [UsageEvents.Event.USER_INTERACTION] from a
+ * non-system package, observed while the usage-event stream says the screen
+ * is interactive and the keyguard is hidden (unlocked). Ambient wakes,
+ * lock-screen noise, notification shade flashes, and face/raise-to-wake
+ * unlocks without subsequent app use do not count.
+ *
+ * Posts are further gated to the local recording window inside
+ * [SupabasePoster].
  *
  * Requires the user to grant the `PACKAGE_USAGE_STATS` app-op via
  * Settings → Special app access → Usage access; without it, queryEvents
  * silently returns an empty iterator. Check [hasPermission] before starting.
  */
 class UsageStatsPoller(
+    private val context: Context,
     private val usm: UsageStatsManager,
     private val poster: SupabasePoster,
     private val sessionId: String,
@@ -46,16 +51,31 @@ class UsageStatsPoller(
     // is strictly newer than the one we posted last time.
     @Volatile private var lastPostedMs: Long = 0
 
+    // Display/lock state reconstructed from the usage-event stream. Defaults
+    // assume the phone is asleep/locked so overnight noise cannot count until
+    // we observe an unlock + interactive screen.
+    @Volatile private var screenInteractive: Boolean = false
+    @Volatile private var keyguardHidden: Boolean = false
+    @Volatile private var sawDisplayStateEvents: Boolean = false
+
     fun start() {
         if (task != null) return
-        cursorMs = System.currentTimeMillis() - INITIAL_LOOKBACK_MS
+        val now = System.currentTimeMillis()
+        // Warm up lock/screen state from recent history without posting, so
+        // the first tick doesn't assume the wrong baseline.
+        hydrateDisplayState(now - STATE_LOOKBACK_MS, now)
+        cursorMs = now
         task = scheduler.scheduleWithFixedDelay(
             ::tick,
-            0,
+            intervalMs,
             intervalMs,
             TimeUnit.MILLISECONDS,
         )
-        Log.i(TAG, "started, interval=${intervalMs}ms")
+        Log.i(
+            TAG,
+            "started, interval=${intervalMs}ms interactive=$screenInteractive " +
+                "unlocked=$keyguardHidden",
+        )
     }
 
     fun stop() {
@@ -72,7 +92,12 @@ class UsageStatsPoller(
             val e = UsageEvents.Event()
             while (events.hasNextEvent()) {
                 events.getNextEvent(e)
-                if (isUserActivity(e.eventType) && e.timeStamp > maxTs) {
+                applyDisplayState(e.eventType)
+                if (
+                    e.eventType == UsageEvents.Event.USER_INTERACTION &&
+                    e.timeStamp > maxTs &&
+                    isRealUserActivity(e.packageName)
+                ) {
                     maxTs = e.timeStamp
                 }
             }
@@ -91,7 +116,61 @@ class UsageStatsPoller(
         }
     }
 
-    private fun isUserActivity(type: Int): Boolean = type in ACTIVE_EVENT_TYPES
+    /**
+     * Walk events only to establish screen/keyguard state. Used on startup
+     * so we inherit "currently locked" vs "already unlocked" correctly.
+     */
+    private fun hydrateDisplayState(startMs: Long, endMs: Long) {
+        try {
+            val events = usm.queryEvents(startMs, endMs)
+            val e = UsageEvents.Event()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(e)
+                applyDisplayState(e.eventType)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "hydrateDisplayState failed: ${t.message}")
+        }
+    }
+
+    private fun applyDisplayState(type: Int) {
+        when (type) {
+            EVENT_SCREEN_INTERACTIVE -> {
+                screenInteractive = true
+                sawDisplayStateEvents = true
+            }
+            EVENT_SCREEN_NON_INTERACTIVE -> {
+                screenInteractive = false
+                sawDisplayStateEvents = true
+            }
+            EVENT_KEYGUARD_SHOWN -> {
+                keyguardHidden = false
+                sawDisplayStateEvents = true
+            }
+            EVENT_KEYGUARD_HIDDEN -> {
+                keyguardHidden = true
+                sawDisplayStateEvents = true
+            }
+        }
+    }
+
+    /**
+     * True only when the phone looks actively in use by a person: unlocked,
+     * screen on for real interaction, and the event is from a normal app
+     * (not System UI overnight noise).
+     */
+    private fun isRealUserActivity(packageName: String?): Boolean {
+        if (isSystemNoisePackage(packageName)) return false
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && sawDisplayStateEvents) {
+            screenInteractive && keyguardHidden
+        } else {
+            // API 26–27 lack keyguard/screen usage events; fall back to live
+            // device state at poll time (slightly racy, rarely used).
+            val km = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            km != null && pm != null && !km.isKeyguardLocked && pm.isInteractive
+        }
+    }
 
     companion object {
         private const val TAG = "UsageStatsPoller"
@@ -99,34 +178,37 @@ class UsageStatsPoller(
         /** Match the desktop tracker's FLUSH_INTERVAL_SECONDS. */
         const val DEFAULT_INTERVAL_MS: Long = 30_000L
 
-        /**
-         * Look back this far on the first tick so we don't miss an
-         * interaction that happened moments before the service came up.
-         */
-        private const val INITIAL_LOOKBACK_MS: Long = 60_000L
+        /** How far back to read on start when reconstructing lock/screen state. */
+        private const val STATE_LOOKBACK_MS: Long = 10 * 60_000L
 
         /**
          * Synthetic "action" surfaced to [LastEvent] / the UI so users can
-         * see when a poll (rather than a broadcast) advanced last-activity.
+         * see when a poll advanced last-activity.
          */
         const val SYNTHETIC_ACTION = "com.hunt.sleeptracker.USAGE_INTERACTION"
 
-        // Event types we treat as "user is actively using the phone".
-        // Values are stable Android constants, referenced numerically for
-        // ones added after our minSdk so we don't need SDK guards here.
-        //
-        // MOVE_TO_FOREGROUND (=1, aka ACTIVITY_RESUMED) is deliberately NOT
-        // in this set. It's an activity-lifecycle transition, not a user
-        // action: it fires overnight from notifications lighting the lock
-        // screen, ambient / always-on-display wakes, OEM-scheduled surfaces
-        // (Google feed, Samsung DailyBoard, etc.), fingerprint/face sensor
-        // wakes, and background work that briefly surfaces an activity —
-        // all of which would otherwise be posted as phone_activity even
-        // though the user never touched the phone.
-        private val ACTIVE_EVENT_TYPES: Set<Int> = setOf(
-            UsageEvents.Event.USER_INTERACTION, // 7 — API 23+, in-app touch/swipe/key
-            12, // NOTIFICATION_INTERACTION — API 29+, user tapped a notification
+        // UsageEvents.Event constants added in API 28; numeric so we compile
+        // against minSdk 26 and simply never observe them on older devices.
+        private const val EVENT_SCREEN_INTERACTIVE = 15
+        private const val EVENT_SCREEN_NON_INTERACTIVE = 16
+        private const val EVENT_KEYGUARD_SHOWN = 17
+        private const val EVENT_KEYGUARD_HIDDEN = 18
+
+        private val SYSTEM_NOISE_PACKAGES: Set<String> = setOf(
+            "android",
+            "com.android.systemui",
+            "com.android.systemui.plugin",
+            "com.samsung.android.honeyboard", // Samsung keyboard / lock input
+            "com.google.android.as", // Android System Intelligence / ambient
         )
+
+        private fun isSystemNoisePackage(packageName: String?): Boolean {
+            if (packageName.isNullOrBlank()) return true
+            if (packageName in SYSTEM_NOISE_PACKAGES) return true
+            // Catch OEM System UI variants (e.g. com.android.systemui.*).
+            if (packageName.startsWith("com.android.systemui")) return true
+            return false
+        }
 
         /**
          * True if the user has granted `PACKAGE_USAGE_STATS` access to us

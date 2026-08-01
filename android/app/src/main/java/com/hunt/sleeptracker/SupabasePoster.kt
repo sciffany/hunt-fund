@@ -14,13 +14,14 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Fire-and-forget POST to the Supabase PostgREST endpoint for
- * `public.sleep_events`. Every screen broadcast becomes one row with
+ * `public.sleep_events`. Qualifying interactions become one row with
  * `event_type = 'phone_activity'` — a phone-specific value added to the
  * check constraint in schema.sql, kept distinct from the desktop tracker's
  * 'activity' rows so the two sources can be queried separately.
  *
- * We drop on network failure per the user's ask. The next screen event will
- * re-establish "last seen" once connectivity returns.
+ * Posts are skipped outside the configured local-time window (same
+ * 8pm–6am default as the desktop tracker). We drop on network failure;
+ * the next in-window interaction re-establishes "last seen".
  */
 class SupabasePoster(
     private val url: String = BuildConfig.SUPABASE_URL,
@@ -34,6 +35,10 @@ class SupabasePoster(
         .build()
 
     fun post(sessionId: String, eventTime: Instant) {
+        if (!RecordingWindow.contains(eventTime)) {
+            Log.d(TAG, "outside recording window; skipping POST at $eventTime")
+            return
+        }
         if (url.isBlank() || apiKey.isBlank()) {
             Log.w(TAG, "Supabase URL/key not configured; skipping POST")
             return

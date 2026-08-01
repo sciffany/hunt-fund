@@ -26,13 +26,13 @@ import java.util.concurrent.TimeUnit
  * Foreground service that owns a runtime-registered [BroadcastReceiver] for
  * SCREEN_ON / SCREEN_OFF / USER_PRESENT.
  *
- * Only [Intent.ACTION_USER_PRESENT] is posted to Supabase as a
- * `phone_activity` event — screen-on alone (tap-to-wake, ambient notification,
- * glancing at the clock at 3am) is not evidence that the user is actively
- * using the phone, and screen-off fires on both intentional locks and passive
- * timeouts. SCREEN_ON / SCREEN_OFF are still received so the in-app
- * [LastEvent] debug UI can show that broadcasts are being observed, but they
- * do not advance "last activity".
+ * Broadcasts are received only so the in-app [LastEvent] debug UI can show
+ * that the service is alive. None of them are posted as `phone_activity`:
+ * screen-on/off fire from tap-to-wake, ambient display, and timeouts, and
+ * unlock alone is too noisy overnight (face/fingerprint wakes, pocket
+ * unlocks, checking the time). Only unlocked, on-screen app interactions
+ * counted by [UsageStatsPoller] advance last-activity, and only inside the
+ * recording window (default 8pm–6am local).
  *
  * Those three broadcasts are all "protected" — a manifest-declared receiver
  * never fires for them, so the service exists purely to keep our runtime
@@ -60,14 +60,8 @@ class ScreenStateService : Service() {
             val ts = Instant.now()
             Log.d(TAG, "received $action at $ts")
             LastEvent.update(action, ts)
-            // Only an actual unlock counts as "user is awake and using the
-            // phone". Screen on/off can fire from tap-to-wake, notifications
-            // lighting the screen, ambient display, or timeouts — none of
-            // which imply intent. Real in-app activity while unlocked is
-            // captured by UsageStatsPoller.
-            if (action == Intent.ACTION_USER_PRESENT) {
-                scheduler.execute { poster.post(sessionId, ts) }
-            }
+            // No POST from broadcasts — unlock-only was a common overnight
+            // false positive. UsageStatsPoller owns phone_activity rows.
         }
     }
 
@@ -131,7 +125,7 @@ class ScreenStateService : Service() {
         if (poller != null) return true
         if (!UsageStatsPoller.hasPermission(this)) return false
         val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        poller = UsageStatsPoller(usm, poster, sessionId, scheduler).also { it.start() }
+        poller = UsageStatsPoller(this, usm, poster, sessionId, scheduler).also { it.start() }
         Log.i(TAG, "usage-stats polling enabled")
         return true
     }

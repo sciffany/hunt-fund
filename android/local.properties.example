@@ -6,6 +6,11 @@ supabase.url=https://xxxx.supabase.co
 supabase.key=eyJhbGciOi...
 user.name=alex-phone
 
+# Optional. Local-hour window for phone_activity logging (matches desktop
+# WINDOW_START_HOUR / WINDOW_END_HOUR). Defaults skip 6am–8pm.
+#window.startHour=20
+#window.endHour=6
+
 # Optional. Point at your local Android SDK. Android Studio writes this
 # automatically the first time you open the project.
 #sdk.dir=/Users/you/Library/Android/sdk

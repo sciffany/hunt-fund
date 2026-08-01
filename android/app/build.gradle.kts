@@ -39,6 +39,18 @@ android {
             "USER_NAME",
             "\"${prop("user.name", "android")}\"",
         )
+        // Same semantics as desktop sleep_tracker.py: record only inside
+        // [start, end). Defaults 20→6 (8pm–6am local); wraps midnight.
+        buildConfigField(
+            "int",
+            "WINDOW_START_HOUR",
+            prop("window.startHour", "20"),
+        )
+        buildConfigField(
+            "int",
+            "WINDOW_END_HOUR",
+            prop("window.endHour", "6"),
+        )
     }
 
     buildFeatures {

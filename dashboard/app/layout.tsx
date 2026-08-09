@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Sleep Accountability",
-  description: "How late everyone stayed up past their bedtime.",
+  title: "Hunt Fund",
+  description: "Sleep and step accountability for the household.",
 };
 
 export default function RootLayout({

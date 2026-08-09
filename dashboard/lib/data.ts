@@ -81,6 +81,14 @@ const BEDTIME_DATE_EXCEPTION_BY_NIGHT = new Map(
 );
 
 export const RATE_SGD_PER_HALF_HOUR = 1.5;
+
+/** Daily step target for every member. */
+export const TARGET_STEPS = 2000;
+/** Steps short of target that make one penalty unit. */
+export const STEP_BLOCK = 500;
+/** SGD owed per STEP_BLOCK below TARGET_STEPS (partial blocks round up). */
+export const RATE_SGD_PER_STEP_BLOCK = 0.5;
+
 const SGT_OFFSET_MIN = 8 * 60;
 const HALF_HOUR_MS = 30 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -89,6 +97,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // yet have a sleep_nights row. Lets brand-new nights be populated with one
 // click; older nights only show once they've been refreshed at least once.
 const RECENT_NIGHTS_TO_SHOW = 14;
+
+// Recent calendar days (SGT) that always render in the steps table even if
+// step_nights has no row yet — mirrors RECENT_NIGHTS_TO_SHOW for sleep.
+const RECENT_STEP_DAYS_TO_SHOW = 14;
 
 // How many days of raw sleep_events we retain. The "Prune old events" button
 // deletes anything older than this; sleep_nights rows (the cached per-night
@@ -125,9 +137,30 @@ export type NightRow = {
   cells: Record<Person, Cell>;
 };
 
+export type StepsCell = {
+  /** Steps recorded for the day, or null if none logged. */
+  steps: number | null;
+  /**
+   * Number of STEP_BLOCK units below TARGET_STEPS (0 if at/above target or
+   * no data). Partial blocks round up, matching sleep's half-hour rounding.
+   */
+  shortfallUnits: number;
+  /** True if recorded steps are strictly below TARGET_STEPS. */
+  below: boolean;
+};
+
+export type StepsDayRow = {
+  /** Calendar day in SGT, formatted YYYY-MM-DD. */
+  day: string;
+  cells: Record<Person, StepsCell>;
+};
+
 export type DashboardData = {
   rows: NightRow[];
   totals: Record<Person, number>;
+  stepRows: StepsDayRow[];
+  /** Total shortfall units (STEP_BLOCK blocks) per person. */
+  stepTotals: Record<Person, number>;
   fetchedAt: string;
   error?: string;
 };
@@ -137,6 +170,12 @@ type SleepNightRow = {
   night: string; // YYYY-MM-DD (Postgres date serialises as ISO date)
   last_activity: string | null;
   updated_at: string | null;
+};
+
+type StepNightRow = {
+  user_name: string;
+  night: string; // YYYY-MM-DD calendar day (column name mirrors sleep_nights)
+  steps: number;
 };
 
 function supabaseEnv(): { url: string; key: string } {
@@ -172,6 +211,30 @@ async function fetchSleepNights(): Promise<SleepNightRow[]> {
     throw new Error(`Supabase fetch failed: ${res.status} ${body}`);
   }
   return (await res.json()) as SleepNightRow[];
+}
+
+async function fetchStepNights(): Promise<StepNightRow[]> {
+  const { url, key } = supabaseEnv();
+  const people = PEOPLE.map((p) => `"${p}"`).join(",");
+  const endpoint =
+    `${url}/rest/v1/step_nights` +
+    `?select=user_name,night,steps` +
+    `&user_name=in.(${people})` +
+    `&order=night.desc`;
+
+  const res = await fetch(endpoint, {
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+    },
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Supabase step_nights fetch failed: ${res.status} ${body}`);
+  }
+  return (await res.json()) as StepNightRow[];
 }
 
 /**
@@ -305,11 +368,30 @@ function buildCell(person: Person, night: string, lastMs: number | null): Cell {
   return { lastActivityMs: lastMs, roundedMs: rounded, halfHours, overdue };
 }
 
-/** Return the last `n` SGT-anchored night keys, oldest first. */
-function recentNightKeys(n: number): string[] {
+function buildStepsCell(steps: number | null): StepsCell {
+  if (steps === null) {
+    return { steps: null, shortfallUnits: 0, below: false };
+  }
+  const shortfall = Math.max(0, TARGET_STEPS - steps);
+  const shortfallUnits =
+    shortfall === 0 ? 0 : Math.ceil(shortfall / STEP_BLOCK);
+  return { steps, shortfallUnits, below: shortfall > 0 };
+}
+
+/** Calendar day YYYY-MM-DD in SGT for an instant. */
+function calendarDaySGT(d: Date = new Date()): string {
+  const sgtMs = d.getTime() + SGT_OFFSET_MIN * 60 * 1000;
+  const sgt = new Date(sgtMs);
+  const y = sgt.getUTCFullYear();
+  const m = String(sgt.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(sgt.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Return the last `n` date keys (YYYY-MM-DD), oldest first. */
+function recentDateKeys(n: number, todayKey: string): string[] {
   const keys: string[] = [];
-  const today = nightKeyForSGT(new Date());
-  const [y, m, d] = today.split("-").map(Number);
+  const [y, m, d] = todayKey.split("-").map(Number);
   const startUtc = Date.UTC(y, m - 1, d);
   for (let i = n - 1; i >= 0; i--) {
     const dt = new Date(startUtc - i * 24 * 60 * 60 * 1000);
@@ -321,6 +403,11 @@ function recentNightKeys(n: number): string[] {
   return keys;
 }
 
+/** Return the last `n` SGT-anchored night keys, oldest first. */
+function recentNightKeys(n: number): string[] {
+  return recentDateKeys(n, nightKeyForSGT(new Date()));
+}
+
 function emptyTotals(): Record<Person, number> {
   return Object.fromEntries(PEOPLE.map((p) => [p, 0])) as Record<
     Person,
@@ -328,19 +415,10 @@ function emptyTotals(): Record<Person, number> {
   >;
 }
 
-export async function loadDashboardData(): Promise<DashboardData> {
-  let rowsData: SleepNightRow[];
-  try {
-    rowsData = await fetchSleepNights();
-  } catch (err) {
-    return {
-      rows: [],
-      totals: emptyTotals(),
-      fetchedAt: new Date().toISOString(),
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
-
+function buildSleepSection(rowsData: SleepNightRow[]): {
+  rows: NightRow[];
+  totals: Record<Person, number>;
+} {
   // Index the fetched rows by (night, person), and track the newest updated_at
   // per night so the UI can show when it was last refreshed.
   const byNight = new Map<string, Map<Person, number>>();
@@ -394,7 +472,99 @@ export async function loadDashboardData(): Promise<DashboardData> {
 
   // Show most recent night first.
   rows.reverse();
-  return { rows, totals, fetchedAt: new Date().toISOString() };
+  return { rows, totals };
+}
+
+function buildStepsSection(rowsData: StepNightRow[]): {
+  stepRows: StepsDayRow[];
+  stepTotals: Record<Person, number>;
+} {
+  const byDay = new Map<string, Map<Person, number>>();
+  for (const r of rowsData) {
+    if (!PEOPLE.includes(r.user_name as Person)) continue;
+    const person = r.user_name as Person;
+    const day = r.night.slice(0, 10);
+    if (!Number.isFinite(r.steps) || r.steps < 0) continue;
+    let row = byDay.get(day);
+    if (!row) {
+      row = new Map();
+      byDay.set(day, row);
+    }
+    row.set(person, r.steps);
+  }
+
+  const daySet = new Set<string>(byDay.keys());
+  for (const k of recentDateKeys(RECENT_STEP_DAYS_TO_SHOW, calendarDaySGT())) {
+    daySet.add(k);
+  }
+
+  const stepTotals = emptyTotals();
+  const stepRows: StepsDayRow[] = [];
+  for (const day of Array.from(daySet).sort()) {
+    const row = byDay.get(day);
+    const cells = {} as Record<Person, StepsCell>;
+    for (const person of PEOPLE) {
+      const steps = row?.has(person) ? (row.get(person) as number) : null;
+      const cell = buildStepsCell(steps);
+      stepTotals[person] += cell.shortfallUnits;
+      cells[person] = cell;
+    }
+    stepRows.push({ day, cells });
+  }
+
+  stepRows.reverse();
+  return { stepRows, stepTotals };
+}
+
+export async function loadDashboardData(): Promise<DashboardData> {
+  const fetchedAt = new Date().toISOString();
+  const empty: DashboardData = {
+    rows: [],
+    totals: emptyTotals(),
+    stepRows: [],
+    stepTotals: emptyTotals(),
+    fetchedAt,
+  };
+
+  const [sleepResult, stepsResult] = await Promise.allSettled([
+    fetchSleepNights(),
+    fetchStepNights(),
+  ]);
+
+  const errors: string[] = [];
+  let rows: NightRow[] = [];
+  let totals = emptyTotals();
+  let stepRows: StepsDayRow[] = [];
+  let stepTotals = emptyTotals();
+
+  if (sleepResult.status === "fulfilled") {
+    ({ rows, totals } = buildSleepSection(sleepResult.value));
+  } else {
+    errors.push(
+      sleepResult.reason instanceof Error
+        ? sleepResult.reason.message
+        : String(sleepResult.reason),
+    );
+  }
+
+  if (stepsResult.status === "fulfilled") {
+    ({ stepRows, stepTotals } = buildStepsSection(stepsResult.value));
+  } else {
+    errors.push(
+      stepsResult.reason instanceof Error
+        ? stepsResult.reason.message
+        : String(stepsResult.reason),
+    );
+  }
+
+  return {
+    ...empty,
+    rows,
+    totals,
+    stepRows,
+    stepTotals,
+    error: errors.length > 0 ? errors.join(" · ") : undefined,
+  };
 }
 
 /** Format ms as HH:MM AM/PM in SGT. */

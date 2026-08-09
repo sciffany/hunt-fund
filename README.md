@@ -25,10 +25,11 @@ so both people writing into the same table are distinguishable.
 Create a Supabase project (or use an existing one). In the SQL editor,
 run [`schema.sql`](./schema.sql). It creates a `sleep_events` table
 (raw event stream) and a `sleep_nights` table (per-night summary that
-the dashboard reads from and its refresh button writes to), plus indexes
-and RLS policies that let the anon key insert/read/update. The file is
-safe to re-run and will migrate installs where `sleep_nights` was
-previously exposed as a view.
+the dashboard reads from and its refresh button writes to), plus
+`step_events` / `step_nights` for the Android daily step counter, with
+indexes and RLS policies that let the anon key insert/read/update. The
+file is safe to re-run and will migrate installs where `sleep_nights`
+was previously exposed as a view.
 
 Grab the project URL and anon key from Project Settings → API.
 
@@ -250,13 +251,19 @@ cd android
 On first launch, tap **Start tracking** and accept the notification
 permission prompt on Android 13+ (needed for the ongoing foreground-
 service notification to show up; the service still runs either way).
-The app then auto-restarts after reboot or a reinstall via a
-`BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` receiver.
+Optionally tap **Enable step counting** and accept the activity-
+recognition prompt so the hardware step counter (accelerometer) can
+track daily steps; the UI shows today's total, and at local midnight
+the completed day's count is written to `step_events` and upserted
+into `step_nights`. The app then auto-restarts after reboot or a
+reinstall via a `BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` receiver.
 
 Verify with `select * from sleep_events where user_name = 'alex-phone'
 order by event_time desc limit 20;` in the Supabase SQL editor — you
 should see a new row every time you press the power button or unlock
-the phone.
+the phone. After a midnight flush,
+`select * from step_nights order by night desc limit 5;` shows daily
+step totals.
 
 ### Security caveat
 

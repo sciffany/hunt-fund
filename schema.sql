@@ -90,3 +90,65 @@ create policy "anyone can update sleep nights"
     to anon, authenticated
     using (true)
     with check (true);
+
+-- Daily step counts from the Android companion (TYPE_STEP_COUNTER /
+-- accelerometer). At local midnight the phone inserts one step_events row
+-- for the day that just ended and upserts the matching step_nights summary
+-- so the dashboard (or SQL) can read per-day totals without scanning events.
+create table if not exists public.step_events (
+    id          bigint generated always as identity primary key,
+    user_name   text        not null,
+    day         date        not null,
+    step_count  integer     not null check (step_count >= 0),
+    event_time  timestamptz not null default now(),
+    session_id  uuid,
+    created_at  timestamptz not null default now()
+);
+
+create index if not exists step_events_user_day_idx
+    on public.step_events (user_name, day desc);
+
+create table if not exists public.step_nights (
+    user_name  text        not null,
+    night      date        not null,
+    steps      integer     not null check (steps >= 0),
+    updated_at timestamptz not null default now(),
+    primary key (user_name, night)
+);
+
+create index if not exists step_nights_night_idx
+    on public.step_nights (night desc);
+
+alter table public.step_events enable row level security;
+alter table public.step_nights enable row level security;
+
+drop policy if exists "anyone can insert step events" on public.step_events;
+create policy "anyone can insert step events"
+    on public.step_events for insert
+    to anon, authenticated
+    with check (true);
+
+drop policy if exists "anyone can read step events" on public.step_events;
+create policy "anyone can read step events"
+    on public.step_events for select
+    to anon, authenticated
+    using (true);
+
+drop policy if exists "anyone can read step nights" on public.step_nights;
+create policy "anyone can read step nights"
+    on public.step_nights for select
+    to anon, authenticated
+    using (true);
+
+drop policy if exists "anyone can insert step nights" on public.step_nights;
+create policy "anyone can insert step nights"
+    on public.step_nights for insert
+    to anon, authenticated
+    with check (true);
+
+drop policy if exists "anyone can update step nights" on public.step_nights;
+create policy "anyone can update step nights"
+    on public.step_nights for update
+    to anon, authenticated
+    using (true)
+    with check (true);

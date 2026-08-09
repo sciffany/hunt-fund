@@ -8,6 +8,15 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--
+      Required on Android 10+ to read TYPE_STEP_COUNTER (hardware step
+      detector backed by the accelerometer). Runtime-prompted from the
+      "Enable step counting" button.
+    -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <uses-feature
+        android:name="android.hardware.sensor.accelerometer"
+        android:required="false" />
+    <!--
       Signature-level permission the user must grant manually via
       Settings → Special app access → Usage access. Lets us call
       UsageStatsManager.queryEvents to detect in-app interactions

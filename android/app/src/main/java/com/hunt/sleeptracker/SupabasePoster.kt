@@ -10,18 +10,20 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
 import java.time.Instant
+import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
 /**
- * Fire-and-forget POST to the Supabase PostgREST endpoint for
- * `public.sleep_events`. Qualifying interactions become one row with
- * `event_type = 'phone_activity'` — a phone-specific value added to the
- * check constraint in schema.sql, kept distinct from the desktop tracker's
- * 'activity' rows so the two sources can be queried separately.
+ * Fire-and-forget POSTs to Supabase PostgREST.
  *
- * Posts are skipped outside the configured local-time window (same
- * 8pm–6am default as the desktop tracker). We drop on network failure;
- * the next in-window interaction re-establishes "last seen".
+ * Sleep: qualifying interactions become one `sleep_events` row with
+ * `event_type = 'phone_activity'` — a phone-specific value kept distinct
+ * from the desktop tracker's `activity` rows. Posts are skipped outside
+ * the configured local-time window (same 8pm–6am default as desktop).
+ *
+ * Steps: at local midnight the service inserts one `step_events` row for
+ * the completed calendar day and upserts `step_nights` so per-day totals
+ * are queryable without scanning the event stream.
  */
 class SupabasePoster(
     private val url: String = BuildConfig.SUPABASE_URL,
@@ -39,10 +41,7 @@ class SupabasePoster(
             Log.d(TAG, "outside recording window; skipping POST at $eventTime")
             return
         }
-        if (url.isBlank() || apiKey.isBlank()) {
-            Log.w(TAG, "Supabase URL/key not configured; skipping POST")
-            return
-        }
+        if (!configured()) return
 
         val payload = buildString {
             append('{')
@@ -53,25 +52,77 @@ class SupabasePoster(
             append('}')
         }.toRequestBody(JSON)
 
+        enqueue("$url/rest/v1/sleep_events", payload, prefer = "return=minimal")
+    }
+
+    /**
+     * Persist a completed calendar day's step total: insert into
+     * `step_events` and upsert `step_nights` (PK user_name, night).
+     */
+    fun postDailySteps(day: LocalDate, stepCount: Int, sessionId: String) {
+        if (!configured()) return
+        if (stepCount < 0) {
+            Log.w(TAG, "refusing negative step_count=$stepCount for $day")
+            return
+        }
+        val eventTime = Instant.now().toString()
+        val dayStr = day.toString()
+
+        val eventPayload = buildString {
+            append('{')
+            append("\"user_name\":").append(jsonString(userName)).append(',')
+            append("\"day\":\"").append(dayStr).append("\",")
+            append("\"step_count\":").append(stepCount).append(',')
+            append("\"event_time\":\"").append(eventTime).append("\",")
+            append("\"session_id\":\"").append(sessionId).append('"')
+            append('}')
+        }.toRequestBody(JSON)
+        enqueue("$url/rest/v1/step_events", eventPayload, prefer = "return=minimal")
+
+        val nightPayload = buildString {
+            append('{')
+            append("\"user_name\":").append(jsonString(userName)).append(',')
+            append("\"night\":\"").append(dayStr).append("\",")
+            append("\"steps\":").append(stepCount).append(',')
+            append("\"updated_at\":\"").append(eventTime).append('"')
+            append('}')
+        }.toRequestBody(JSON)
+        enqueue(
+            "$url/rest/v1/step_nights?on_conflict=user_name,night",
+            nightPayload,
+            prefer = "resolution=merge-duplicates,return=minimal",
+        )
+        Log.i(TAG, "flushing $stepCount steps for $dayStr")
+    }
+
+    private fun configured(): Boolean {
+        if (url.isBlank() || apiKey.isBlank()) {
+            Log.w(TAG, "Supabase URL/key not configured; skipping POST")
+            return false
+        }
+        return true
+    }
+
+    private fun enqueue(endpoint: String, body: okhttp3.RequestBody, prefer: String) {
         val req = Request.Builder()
-            .url("$url/rest/v1/sleep_events")
+            .url(endpoint)
             .header("apikey", apiKey)
             .header("Authorization", "Bearer $apiKey")
             .header("Content-Type", "application/json")
-            .header("Prefer", "return=minimal")
-            .post(payload)
+            .header("Prefer", prefer)
+            .post(body)
             .build()
 
         client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                Log.w(TAG, "POST failed: ${e.message}")
+                Log.w(TAG, "POST $endpoint failed: ${e.message}")
             }
             override fun onResponse(call: Call, response: Response) {
                 response.use {
                     if (!it.isSuccessful) {
-                        Log.w(TAG, "POST ${it.code}: ${it.body?.string()?.take(200)}")
+                        Log.w(TAG, "POST $endpoint ${it.code}: ${it.body?.string()?.take(200)}")
                     } else {
-                        Log.d(TAG, "POST ${it.code}")
+                        Log.d(TAG, "POST $endpoint ${it.code}")
                     }
                 }
             }

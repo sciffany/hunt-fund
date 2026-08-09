@@ -6,12 +6,21 @@
     <string name="notification_title">SleepTracker running</string>
     <string name="notification_text">Logging phone activity and screen on/off.</string>
     <string name="btn_start">Start tracking</string>
+    <string name="btn_enable_steps">Enable step counting</string>
+    <string name="btn_steps_enabled">Step counting on</string>
+    <string name="btn_send_steps">Send steps</string>
+    <string name="steps_sent">Sent %1$d steps for today</string>
+    <string name="steps_send_failed">Could not send steps — check Supabase config.</string>
     <string name="btn_stop">Stop tracking</string>
     <string name="status_running">Running as %1$s</string>
     <string name="status_stopped">Stopped</string>
     <string name="config_missing">SUPABASE_URL or SUPABASE_KEY is empty. Set them in android/local.properties and rebuild.</string>
     <string name="last_event_none">No events posted yet this session.</string>
     <string name="last_event">Last event: %1$s at %2$s</string>
+    <string name="daily_steps_none">Daily steps: —</string>
+    <string name="daily_steps">Daily steps: %1$d</string>
+    <string name="steps_sensor_missing">This device has no step counter (accelerometer) sensor.</string>
+    <string name="steps_permission_denied">Activity recognition permission is required to count steps.</string>
     <string name="usage_access_missing">Usage access not granted. Without it, in-app activity (e.g. scrolling) isn\'t logged while the screen stays on — only screen on/off broadcasts are.</string>
     <string name="btn_grant_usage_access">Grant usage access</string>
 </resources>

@@ -11,12 +11,15 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import android.view.View
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.hunt.sleeptracker.databinding.ActivityMainBinding
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
 
@@ -26,7 +29,19 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.RequestPermission(),
     ) { /* result ignored — service still runs; only the notification is affected */ }
 
+    private val requestActivityRecognition = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            startTrackerService(this, enableSteps = true)
+        } else {
+            Toast.makeText(this, R.string.steps_permission_denied, Toast.LENGTH_SHORT).show()
+        }
+        refreshUi()
+    }
+
     private val lastEventListener: () -> Unit = { runOnUiThread { refreshUi() } }
+    private var stepsListener: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,6 +52,12 @@ class MainActivity : AppCompatActivity() {
             requestNotificationPermissionIfNeeded()
             startTrackerService(this)
             refreshUi()
+        }
+        binding.enableStepsButton.setOnClickListener {
+            enableStepCounting()
+        }
+        binding.sendStepsButton.setOnClickListener {
+            sendCurrentSteps()
         }
         binding.stopButton.setOnClickListener {
             stopService(Intent(this, ScreenStateService::class.java))
@@ -50,12 +71,62 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         LastEvent.addListener(lastEventListener)
+        attachStepsListener()
         refreshUi()
     }
 
     override fun onPause() {
         LastEvent.removeListener(lastEventListener)
+        detachStepsListener()
         super.onPause()
+    }
+
+    private fun enableStepCounting() {
+        if (!StepCounterTracker.hasSensor(this)) {
+            Toast.makeText(this, R.string.steps_sensor_missing, Toast.LENGTH_LONG).show()
+            return
+        }
+        requestNotificationPermissionIfNeeded()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val granted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACTIVITY_RECOGNITION,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                requestActivityRecognition.launch(Manifest.permission.ACTIVITY_RECOGNITION)
+                return
+            }
+        }
+        startTrackerService(this, enableSteps = true)
+        refreshUi()
+    }
+
+    private fun sendCurrentSteps() {
+        val configOk = BuildConfig.SUPABASE_URL.isNotBlank() &&
+            BuildConfig.SUPABASE_KEY.isNotBlank()
+        if (!configOk) {
+            Toast.makeText(this, R.string.steps_send_failed, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val live = ScreenStateService.sharedDailySteps
+        val day = live?.day ?: LocalDate.now()
+        val count = live?.stepsToday ?: DailySteps.peekStepsToday(this)
+        SupabasePoster().postDailySteps(day, count, UUID.randomUUID().toString())
+        Toast.makeText(this, getString(R.string.steps_sent, count), Toast.LENGTH_SHORT).show()
+    }
+
+    private fun attachStepsListener() {
+        detachStepsListener()
+        val steps = ScreenStateService.sharedDailySteps ?: return
+        val listener = { runOnUiThread { refreshUi() } }
+        stepsListener = listener
+        steps.addListener(listener)
+    }
+
+    private fun detachStepsListener() {
+        val listener = stepsListener ?: return
+        ScreenStateService.sharedDailySteps?.removeListener(listener)
+        stepsListener = null
     }
 
     private fun refreshUi() {
@@ -88,6 +159,25 @@ class MainActivity : AppCompatActivity() {
         } else {
             getString(R.string.last_event_none)
         }
+
+        val stepsPerm = StepCounterTracker.hasPermission(this)
+        val stepsOn = stepsPerm && running &&
+            ScreenStateService.sharedDailySteps != null
+        binding.enableStepsButton.isEnabled = !stepsOn
+        binding.enableStepsButton.text = getString(
+            if (stepsOn) R.string.btn_steps_enabled else R.string.btn_enable_steps,
+        )
+
+        val count = ScreenStateService.sharedDailySteps?.stepsToday
+            ?: DailySteps.peekStepsToday(this)
+        binding.dailyStepsText.text = if (stepsPerm || count > 0) {
+            getString(R.string.daily_steps, count)
+        } else {
+            getString(R.string.daily_steps_none)
+        }
+
+        // Re-bind listener if the service came up after we resumed.
+        if (running && stepsListener == null) attachStepsListener()
     }
 
     private fun openUsageAccessSettings() {
@@ -135,8 +225,11 @@ class MainActivity : AppCompatActivity() {
         private val LOCAL_FMT: DateTimeFormatter =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z")
 
-        fun startTrackerService(context: Context) {
+        fun startTrackerService(context: Context, enableSteps: Boolean = false) {
             val intent = Intent(context, ScreenStateService::class.java)
+            if (enableSteps) {
+                intent.action = ScreenStateService.ACTION_ENABLE_STEPS
+            }
             ContextCompat.startForegroundService(context, intent)
         }
     }

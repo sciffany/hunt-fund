@@ -41,11 +41,17 @@ import java.util.concurrent.TimeUnit
  * When the user has granted `PACKAGE_USAGE_STATS`, we additionally run a
  * [UsageStatsPoller] on the same executor to catch in-app interactions
  * (e.g. scrolling) that never produce a broadcast.
+ *
+ * When ACTIVITY_RECOGNITION is granted, a [StepCounterTracker] listens
+ * to the hardware step counter and [DailySteps] flushes the previous
+ * calendar day's total to Supabase (`step_events` + `step_nights`) at
+ * local midnight.
  */
 class ScreenStateService : Service() {
 
     private lateinit var sessionId: String
     private lateinit var poster: SupabasePoster
+    private lateinit var dailySteps: DailySteps
 
     // Single-thread scheduler serves both the broadcast receiver's POSTs and
     // the usage-stats poller's periodic ticks; serialization is fine since
@@ -53,6 +59,8 @@ class ScreenStateService : Service() {
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
     private var poller: UsageStatsPoller? = null
     private var permissionRetry: ScheduledFuture<*>? = null
+    private var midnightTick: ScheduledFuture<*>? = null
+    private var stepTracker: StepCounterTracker? = null
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -69,6 +77,14 @@ class ScreenStateService : Service() {
         super.onCreate()
         sessionId = UUID.randomUUID().toString()
         poster = SupabasePoster()
+        dailySteps = DailySteps(this) { day, steps ->
+            // Callback may arrive on the sensor or scheduler thread.
+            poster.postDailySteps(day, steps, sessionId)
+        }
+        // If the process was dead across midnight, flush the stored day now.
+        dailySteps.tick()
+        // Expose for the activity's live "today's steps" label.
+        sharedDailySteps = dailySteps
 
         // Android 14+ requires the foregroundServiceType at startForeground
         // time (must match one declared in the manifest).
@@ -114,6 +130,19 @@ class ScreenStateService : Service() {
             )
         }
 
+        startStepTrackingIfPermitted()
+        // Catch a day rollover even if the step sensor is quiet (phone on
+        // a charger overnight). Also retries permission → sensor register.
+        midnightTick = scheduler.scheduleWithFixedDelay(
+            {
+                dailySteps.tick()
+                startStepTrackingIfPermitted()
+            },
+            MIDNIGHT_TICK_SECONDS,
+            MIDNIGHT_TICK_SECONDS,
+            TimeUnit.SECONDS,
+        )
+
         Log.i(TAG, "ScreenStateService started, session=$sessionId")
     }
 
@@ -130,9 +159,21 @@ class ScreenStateService : Service() {
         return true
     }
 
+    private fun startStepTrackingIfPermitted() {
+        if (stepTracker?.running == true) return
+        if (!StepCounterTracker.hasPermission(this)) return
+        if (stepTracker == null) {
+            stepTracker = StepCounterTracker(this, dailySteps)
+        }
+        stepTracker?.start()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // START_STICKY so Android brings the service back if it's killed for
         // memory; the receiver gets re-registered in the fresh onCreate().
+        if (intent?.action == ACTION_ENABLE_STEPS) {
+            startStepTrackingIfPermitted()
+        }
         return START_STICKY
     }
 
@@ -144,7 +185,11 @@ class ScreenStateService : Service() {
         }
         permissionRetry?.cancel(false)
         permissionRetry = null
+        midnightTick?.cancel(false)
+        midnightTick = null
         poller?.stop()
+        stepTracker?.stop()
+        if (sharedDailySteps === dailySteps) sharedDailySteps = null
         scheduler.shutdown()
         Log.i(TAG, "ScreenStateService stopped")
         super.onDestroy()
@@ -191,5 +236,12 @@ class ScreenStateService : Service() {
         private const val CHANNEL_ID = "screen_state_tracker"
         private const val NOTIFICATION_ID = 1
         private const val PERMISSION_RETRY_SECONDS = 60L
+        private const val MIDNIGHT_TICK_SECONDS = 60L
+        const val ACTION_ENABLE_STEPS = "com.hunt.sleeptracker.ENABLE_STEPS"
+
+        /** Live counter while the service is up; null when stopped. */
+        @Volatile
+        var sharedDailySteps: DailySteps? = null
+            private set
     }
 }

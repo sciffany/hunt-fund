@@ -94,6 +94,9 @@ export default async function Page() {
                       refreshedAt={row.refreshedAt}
                       refreshable={row.refreshable}
                     />
+                    {row.note && (
+                      <div className="night-note">{row.note}</div>
+                    )}
                   </td>
                   {PEOPLE.map((p) => {
                     const cell = row.cells[p];

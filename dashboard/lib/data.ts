@@ -120,6 +120,8 @@ export type NightRow = {
    * frozen at whatever's cached in sleep_nights.
    */
   refreshable: boolean;
+  /** Optional label from a one-off bedtime date exception, if any. */
+  note: string | null;
   cells: Record<Person, Cell>;
 };
 
@@ -385,6 +387,7 @@ export async function loadDashboardData(): Promise<DashboardData> {
       night,
       refreshedAt: refreshedAt.get(night) ?? null,
       refreshable: isNightRefreshable(night, nowMs),
+      note: BEDTIME_DATE_EXCEPTION_BY_NIGHT.get(night)?.note ?? null,
       cells,
     });
   }

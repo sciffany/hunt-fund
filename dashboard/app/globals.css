@@ -155,6 +155,12 @@ footer {
   margin-right: 8px;
 }
 
+.night-note {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .refresh {
   display: inline-flex;
   align-items: center;

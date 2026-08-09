@@ -1,5 +1,6 @@
 package com.hunt.sleeptracker
 
+import android.content.Context
 import android.util.Log
 import okhttp3.Call
 import okhttp3.Callback
@@ -24,12 +25,18 @@ import java.util.concurrent.TimeUnit
  * Steps: at local midnight the service inserts one `step_events` row for
  * the completed calendar day and upserts `step_nights` so per-day totals
  * are queryable without scanning the event stream.
+ *
+ * [userName] is resolved from [UserSettings] on each post so a settings
+ * rename takes effect without restarting the foreground service.
  */
 class SupabasePoster(
+    context: Context,
     private val url: String = BuildConfig.SUPABASE_URL,
     private val apiKey: String = BuildConfig.SUPABASE_KEY,
-    private val userName: String = BuildConfig.USER_NAME,
 ) {
+    private val appContext = context.applicationContext
+
+    private fun userName(): String = UserSettings.getUserName(appContext)
     private val client = OkHttpClient.Builder()
         .callTimeout(10, TimeUnit.SECONDS)
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -45,7 +52,7 @@ class SupabasePoster(
 
         val payload = buildString {
             append('{')
-            append("\"user_name\":").append(jsonString(userName)).append(',')
+            append("\"user_name\":").append(jsonString(userName())).append(',')
             append("\"event_type\":\"phone_activity\",")
             append("\"event_time\":\"").append(eventTime.toString()).append("\",")
             append("\"session_id\":\"").append(sessionId).append('"')
@@ -68,9 +75,10 @@ class SupabasePoster(
         val eventTime = Instant.now().toString()
         val dayStr = day.toString()
 
+        val name = userName()
         val eventPayload = buildString {
             append('{')
-            append("\"user_name\":").append(jsonString(userName)).append(',')
+            append("\"user_name\":").append(jsonString(name)).append(',')
             append("\"day\":\"").append(dayStr).append("\",")
             append("\"step_count\":").append(stepCount).append(',')
             append("\"event_time\":\"").append(eventTime).append("\",")
@@ -81,7 +89,7 @@ class SupabasePoster(
 
         val nightPayload = buildString {
             append('{')
-            append("\"user_name\":").append(jsonString(userName)).append(',')
+            append("\"user_name\":").append(jsonString(name)).append(',')
             append("\"night\":\"").append(dayStr).append("\",")
             append("\"steps\":").append(stepCount).append(',')
             append("\"updated_at\":\"").append(eventTime).append('"')

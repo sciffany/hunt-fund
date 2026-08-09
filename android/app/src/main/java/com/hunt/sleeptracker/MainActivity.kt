@@ -11,8 +11,10 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.hunt.sleeptracker.databinding.ActivityMainBinding
@@ -48,6 +50,8 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        binding.usernameInput.setText(UserSettings.getUserName(this))
+
         binding.startButton.setOnClickListener {
             requestNotificationPermissionIfNeeded()
             startTrackerService(this)
@@ -65,6 +69,9 @@ class MainActivity : AppCompatActivity() {
         }
         binding.grantUsageAccessButton.setOnClickListener {
             openUsageAccessSettings()
+        }
+        binding.saveUsernameButton.setOnClickListener {
+            onSaveUsernameClicked()
         }
     }
 
@@ -111,8 +118,41 @@ class MainActivity : AppCompatActivity() {
         val live = ScreenStateService.sharedDailySteps
         val day = live?.day ?: LocalDate.now()
         val count = live?.stepsToday ?: DailySteps.peekStepsToday(this)
-        SupabasePoster().postDailySteps(day, count, UUID.randomUUID().toString())
+        SupabasePoster(this).postDailySteps(day, count, UUID.randomUUID().toString())
         Toast.makeText(this, getString(R.string.steps_sent, count), Toast.LENGTH_SHORT).show()
+    }
+
+    private fun onSaveUsernameClicked() {
+        val next = binding.usernameInput.text?.toString()?.trim().orEmpty()
+        if (next.isEmpty()) {
+            Toast.makeText(this, R.string.username_blank, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val current = UserSettings.getUserName(this)
+        if (next == current) {
+            Toast.makeText(this, getString(R.string.username_unchanged, current), Toast.LENGTH_SHORT)
+                .show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.username_change_title)
+            .setMessage(getString(R.string.username_change_message, next, current))
+            .setNegativeButton(R.string.username_change_cancel, null)
+            .setPositiveButton(R.string.username_change_confirm) { _, _ ->
+                UserSettings.setUserName(this, next)
+                binding.usernameInput.setText(next)
+                hideKeyboard()
+                Toast.makeText(this, getString(R.string.username_saved, next), Toast.LENGTH_SHORT)
+                    .show()
+                refreshUi()
+            }
+            .show()
+    }
+
+    private fun hideKeyboard() {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.hideSoftInputFromWindow(binding.usernameInput.windowToken, 0)
+        binding.usernameInput.clearFocus()
     }
 
     private fun attachStepsListener() {
@@ -131,10 +171,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshUi() {
         val running = isServiceRunning()
+        val userName = UserSettings.getUserName(this)
         binding.statusText.text = if (running) {
-            getString(R.string.status_running, BuildConfig.USER_NAME)
+            getString(R.string.status_running, userName)
         } else {
             getString(R.string.status_stopped)
+        }
+        // Keep the field in sync when returning to the screen, but don't
+        // stomp mid-edit if the user is typing a new name.
+        if (!binding.usernameInput.isFocused) {
+            binding.usernameInput.setText(userName)
         }
 
         val configOk = BuildConfig.SUPABASE_URL.isNotBlank() &&
@@ -161,8 +207,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val stepsPerm = StepCounterTracker.hasPermission(this)
-        val stepsOn = stepsPerm && running &&
-            ScreenStateService.sharedDailySteps != null
+        val stepsOn = stepsPerm && running && ScreenStateService.stepsTracking
         binding.enableStepsButton.isEnabled = !stepsOn
         binding.enableStepsButton.text = getString(
             if (stepsOn) R.string.btn_steps_enabled else R.string.btn_enable_steps,

@@ -12,7 +12,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -42,10 +44,10 @@ import java.util.concurrent.TimeUnit
  * [UsageStatsPoller] on the same executor to catch in-app interactions
  * (e.g. scrolling) that never produce a broadcast.
  *
- * When ACTIVITY_RECOGNITION is granted, a [StepCounterTracker] listens
- * to the hardware step counter and [DailySteps] flushes the previous
- * calendar day's total to Supabase (`step_events` + `step_nights`) at
- * local midnight.
+ * When ACTIVITY_RECOGNITION is granted, a [StepCounterTracker] reads the
+ * phone's system [android.hardware.Sensor.TYPE_STEP_COUNTER] (catching up
+ * after listener gaps) and [DailySteps] flushes the previous calendar day's
+ * total to Supabase (`step_events` + `step_nights`) at local midnight.
  */
 class ScreenStateService : Service() {
 
@@ -61,6 +63,7 @@ class ScreenStateService : Service() {
     private var permissionRetry: ScheduledFuture<*>? = null
     private var midnightTick: ScheduledFuture<*>? = null
     private var stepTracker: StepCounterTracker? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -76,7 +79,7 @@ class ScreenStateService : Service() {
     override fun onCreate() {
         super.onCreate()
         sessionId = UUID.randomUUID().toString()
-        poster = SupabasePoster()
+        poster = SupabasePoster(this)
         dailySteps = DailySteps(this) { day, steps ->
             // Callback may arrive on the sensor or scheduler thread.
             poster.postDailySteps(day, steps, sessionId)
@@ -87,15 +90,10 @@ class ScreenStateService : Service() {
         sharedDailySteps = dailySteps
 
         // Android 14+ requires the foregroundServiceType at startForeground
-        // time (must match one declared in the manifest).
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            buildNotification(),
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-            else 0,
-        )
+        // time (must match types declared in the manifest). Include "health"
+        // only when ACTIVITY_RECOGNITION is already granted — starting a
+        // health FGS without it throws SecurityException.
+        promoteForeground(includeHealth = StepCounterTracker.hasPermission(this))
 
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
@@ -136,7 +134,8 @@ class ScreenStateService : Service() {
         midnightTick = scheduler.scheduleWithFixedDelay(
             {
                 dailySteps.tick()
-                startStepTrackingIfPermitted()
+                // Sensor registration must happen on the main thread.
+                mainHandler.post { startStepTrackingIfPermitted() }
             },
             MIDNIGHT_TICK_SECONDS,
             MIDNIGHT_TICK_SECONDS,
@@ -160,12 +159,46 @@ class ScreenStateService : Service() {
     }
 
     private fun startStepTrackingIfPermitted() {
-        if (stepTracker?.running == true) return
-        if (!StepCounterTracker.hasPermission(this)) return
+        if (stepTracker?.running == true) {
+            stepsTracking = true
+            return
+        }
+        if (!StepCounterTracker.hasPermission(this)) {
+            stepsTracking = false
+            return
+        }
+        // Step sensors require the health FGS type on Android 14+.
+        promoteForeground(includeHealth = true)
         if (stepTracker == null) {
             stepTracker = StepCounterTracker(this, dailySteps)
         }
-        stepTracker?.start()
+        // Periodic midnight tick retries this if registration failed earlier
+        // (permission granted late, or a prior start() returned false).
+        stepsTracking = stepTracker?.start() == true
+        if (!stepsTracking) {
+            Log.w(TAG, "step tracking failed to start despite permission")
+        }
+    }
+
+    /**
+     * (Re)promote this service to the foreground with the right type mask.
+     * Safe to call repeatedly — [Service.startForeground] may be invoked
+     * again to add types once ACTIVITY_RECOGNITION is granted.
+     */
+    private fun promoteForeground(includeHealth: Boolean) {
+        var types = 0
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            types = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            if (includeHealth) {
+                types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
+            }
+        }
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            buildNotification(),
+            types,
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -189,6 +222,7 @@ class ScreenStateService : Service() {
         midnightTick = null
         poller?.stop()
         stepTracker?.stop()
+        stepsTracking = false
         if (sharedDailySteps === dailySteps) sharedDailySteps = null
         scheduler.shutdown()
         Log.i(TAG, "ScreenStateService stopped")
@@ -242,6 +276,11 @@ class ScreenStateService : Service() {
         /** Live counter while the service is up; null when stopped. */
         @Volatile
         var sharedDailySteps: DailySteps? = null
+            private set
+
+        /** True while the system step-counter listener is registered. */
+        @Volatile
+        var stepsTracking: Boolean = false
             private set
     }
 }

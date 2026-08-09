@@ -5,16 +5,26 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!--
+      Required on Android 14+ when the foreground service listens to the
+      step counter / activity-recognition sensors (type "health").
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!--
-      Required on Android 10+ to read TYPE_STEP_COUNTER (hardware step
-      detector backed by the accelerometer). Runtime-prompted from the
-      "Enable step counting" button.
+      Required on Android 10+ to read TYPE_STEP_COUNTER (the phone's
+      system pedometer). Runtime-prompted from the enable-steps button.
     -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
     <uses-feature
         android:name="android.hardware.sensor.accelerometer"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.sensor.stepcounter"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.sensor.stepdetector"
         android:required="false" />
     <!--
       Signature-level permission the user must grant manually via
@@ -47,7 +57,7 @@
         <service
             android:name=".ScreenStateService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="dataSync|health" />
 
         <receiver
             android:name=".BootReceiver"

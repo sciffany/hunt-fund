@@ -6,10 +6,10 @@
     <string name="notification_title">SleepTracker running</string>
     <string name="notification_text">Logging phone activity and screen on/off.</string>
     <string name="btn_start">Start tracking</string>
-    <string name="btn_enable_steps">Enable step counting</string>
-    <string name="btn_steps_enabled">Step counting on</string>
+    <string name="btn_enable_steps">Enable phone steps</string>
+    <string name="btn_steps_enabled">Phone steps on</string>
     <string name="btn_send_steps">Send steps</string>
-    <string name="steps_sent">Sent %1$d steps for today</string>
+    <string name="steps_sent">Sent %1$d phone steps for today</string>
     <string name="steps_send_failed">Could not send steps — check Supabase config.</string>
     <string name="btn_stop">Stop tracking</string>
     <string name="status_running">Running as %1$s</string>
@@ -17,10 +17,19 @@
     <string name="config_missing">SUPABASE_URL or SUPABASE_KEY is empty. Set them in android/local.properties and rebuild.</string>
     <string name="last_event_none">No events posted yet this session.</string>
     <string name="last_event">Last event: %1$s at %2$s</string>
-    <string name="daily_steps_none">Daily steps: —</string>
-    <string name="daily_steps">Daily steps: %1$d</string>
-    <string name="steps_sensor_missing">This device has no step counter (accelerometer) sensor.</string>
-    <string name="steps_permission_denied">Activity recognition permission is required to count steps.</string>
+    <string name="daily_steps_none">Phone steps: —</string>
+    <string name="daily_steps">Phone steps: %1$d</string>
+    <string name="steps_sensor_missing">This device has no system step counter sensor.</string>
+    <string name="steps_permission_denied">Activity recognition permission is required to read phone steps.</string>
     <string name="usage_access_missing">Usage access not granted. Without it, in-app activity (e.g. scrolling) isn\'t logged while the screen stays on — only screen on/off broadcasts are.</string>
     <string name="btn_grant_usage_access">Grant usage access</string>
+    <string name="username_label">Username</string>
+    <string name="btn_save_username">Save username</string>
+    <string name="username_blank">Username cannot be blank.</string>
+    <string name="username_saved">Username saved as %1$s</string>
+    <string name="username_unchanged">Username is already %1$s</string>
+    <string name="username_change_title">Change username?</string>
+    <string name="username_change_message">New events will be logged as \"%1$s\". Existing history under \"%2$s\" will stay under that name unless you migrate it manually. The dashboard only shows names listed in PEOPLE.</string>
+    <string name="username_change_confirm">Change</string>
+    <string name="username_change_cancel">Cancel</string>
 </resources>

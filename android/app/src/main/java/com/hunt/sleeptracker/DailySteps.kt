@@ -6,12 +6,15 @@ import java.time.ZoneId
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * Durable daily step counter backed by SharedPreferences.
+ * Durable daily step total backed by SharedPreferences.
  *
- * Uses the hardware [android.hardware.Sensor.TYPE_STEP_COUNTER] cumulative
- * value (accelerometer-backed on most phones). Survives process death and
- * reboots: on reboot the raw counter resets to 0, which we detect as a
- * drop and treat subsequent increases as new steps on top of [stepsToday].
+ * Primary input is the phone's system [android.hardware.Sensor.TYPE_STEP_COUNTER]
+ * cumulative value (kept by the hardware even while our listener is down).
+ * Survives process death and reboots: on reboot the raw counter resets to 0,
+ * which we detect as a drop and treat subsequent increases as new steps on
+ * top of [stepsToday].
+ *
+ * [onStepDetected] is only for the rare devices that lack a step counter.
  *
  * Day boundaries use the device's local timezone. When the calendar day
  * rolls over, [onDayRollover] is invoked with the completed day's total
@@ -59,6 +62,19 @@ class DailySteps(
             stepsToday += raw - lastRaw
         }
         lastRaw = raw
+        persist()
+        notifyListeners()
+    }
+
+    /**
+     * One hardware-detected step ([android.hardware.Sensor.TYPE_STEP_DETECTOR]).
+     * Fallback only when TYPE_STEP_COUNTER is unavailable — these
+     * increments are lost for any period the listener was not registered.
+     */
+    @Synchronized
+    fun onStepDetected() {
+        rollDayIfNeeded()
+        stepsToday += 1
         persist()
         notifyListeners()
     }

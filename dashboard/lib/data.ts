@@ -62,6 +62,24 @@ const BEDTIME_HOURS_PAST_NOON_SGT: Record<Person, Record<DayKey, number>> = {
   },
 };
 
+/**
+ * One-off holiday / stay-over nights. Each entry adds `extraHours` on top of
+ * the normal day-of-week bedtime for that night (YYYY-MM-DD, SGT anchor).
+ * Redeploy the dashboard after editing.
+ */
+const BEDTIME_DATE_EXCEPTIONS: {
+  night: string;
+  extraHours: number;
+  note?: string;
+}[] = [
+  { night: "2026-08-05", extraHours: 2, note: "Nuisance night" },
+  { night: "2026-08-09", extraHours: 2, note: "National Day" },
+];
+
+const BEDTIME_DATE_EXCEPTION_BY_NIGHT = new Map(
+  BEDTIME_DATE_EXCEPTIONS.map((e) => [e.night, e]),
+);
+
 export const RATE_SGD_PER_HALF_HOUR = 1.5;
 const SGT_OFFSET_MIN = 8 * 60;
 const HALF_HOUR_MS = 30 * 60 * 1000;
@@ -183,7 +201,9 @@ function bedtimeMs(person: Person, nightKey: string): number {
   const [y, m, d] = nightKey.split("-").map(Number);
   // Noon SGT on the anchor date = 04:00 UTC on that date.
   const noonSgtUtcMs = Date.UTC(y, m - 1, d, 4, 0, 0, 0);
-  const hours = BEDTIME_HOURS_PAST_NOON_SGT[person][nightDayKey(nightKey)];
+  const hours =
+    BEDTIME_HOURS_PAST_NOON_SGT[person][nightDayKey(nightKey)] +
+    (BEDTIME_DATE_EXCEPTION_BY_NIGHT.get(nightKey)?.extraHours ?? 0);
   return noonSgtUtcMs + hours * 60 * 60 * 1000;
 }
 

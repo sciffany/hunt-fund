@@ -16,17 +16,121 @@ html,
 body {
   margin: 0;
   padding: 0;
-  background: var(--bg);
+  background:
+    radial-gradient(ellipse 80% 50% at 20% 10%, rgba(178, 58, 72, 0.06), transparent 55%),
+    radial-gradient(ellipse 70% 45% at 85% 80%, rgba(40, 120, 100, 0.07), transparent 50%),
+    var(--bg);
   color: var(--ink);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
+  font-family: var(--font-comic), "Comic Neue", "Comic Sans MS", cursive,
     sans-serif;
   font-feature-settings: "tnum" 1;
+  min-height: 100%;
+  overflow-x: hidden;
 }
 
 main {
+  position: relative;
+  z-index: 1;
   max-width: 900px;
   margin: 0 auto;
   padding: 48px 24px 96px;
+}
+
+/* —— Flying slogan wallpaper —— */
+.flying-slogans {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  /* Visible in the page margins; faded under the centered dashboard. */
+  -webkit-mask-image:
+    linear-gradient(
+      to right,
+      #000 0%,
+      #000 max(0px, calc(50% - 480px)),
+      transparent max(60px, calc(50% - 420px)),
+      transparent min(calc(100% - 60px), calc(50% + 420px)),
+      #000 min(100%, calc(50% + 480px)),
+      #000 100%
+    ),
+    linear-gradient(
+      to bottom,
+      #000 0%,
+      #000 72px,
+      transparent 150px,
+      transparent calc(100% - 120px),
+      #000 calc(100% - 48px),
+      #000 100%
+    );
+  mask-image:
+    linear-gradient(
+      to right,
+      #000 0%,
+      #000 max(0px, calc(50% - 480px)),
+      transparent max(60px, calc(50% - 420px)),
+      transparent min(calc(100% - 60px), calc(50% + 420px)),
+      #000 min(100%, calc(50% + 480px)),
+      #000 100%
+    ),
+    linear-gradient(
+      to bottom,
+      #000 0%,
+      #000 72px,
+      transparent 150px,
+      transparent calc(100% - 120px),
+      #000 calc(100% - 48px),
+      #000 100%
+    );
+  -webkit-mask-composite: source-over;
+  mask-composite: add;
+}
+
+.flying-slogan {
+  position: absolute;
+  font-family: var(--font-bangers), Bangers, "Comic Sans MS", cursive;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  white-space: normal;
+  line-height: 1.05;
+  text-transform: lowercase;
+  max-width: min(220px, 18vw);
+  transform: rotate(var(--rotate, 0deg));
+  animation: slogan-fly var(--duration, 24s) ease-in-out var(--delay, 0s) infinite
+    alternate;
+  will-change: transform;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+@media (max-width: 1100px) {
+  .flying-slogan {
+    max-width: min(280px, 42vw);
+  }
+}
+
+@keyframes slogan-fly {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(var(--rotate, 0deg)) scale(1);
+  }
+  50% {
+    transform: translate3d(
+        calc(var(--drift-x, 40px) * 0.55),
+        calc(var(--drift-y, 24px) * -0.4),
+        0
+      )
+      rotate(calc(var(--rotate, 0deg) + 6deg)) scale(1.04);
+  }
+  100% {
+    transform: translate3d(var(--drift-x, 40px), var(--drift-y, 24px), 0)
+      rotate(calc(var(--rotate, 0deg) - 4deg)) scale(0.97);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flying-slogan {
+    animation: none;
+  }
 }
 
 header {
@@ -85,7 +189,9 @@ h2 {
 }
 
 .card {
-  background: var(--card);
+  position: relative;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(6px);
   border: 1px solid var(--line);
   border-radius: 12px;
   overflow: hidden;

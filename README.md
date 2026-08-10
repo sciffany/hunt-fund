@@ -26,7 +26,8 @@ Create a Supabase project (or use an existing one). In the SQL editor,
 run [`schema.sql`](./schema.sql). It creates a `sleep_events` table
 (raw event stream) and a `sleep_nights` table (per-night summary that
 the dashboard reads from and its refresh button writes to), plus
-`step_events` / `step_nights` for the Android daily step counter, with
+`step_events` / `step_nights` for Android daily steps (Health Connect,
+with hardware pedometer fallback), with
 indexes and RLS policies that let the anon key insert/read/update. The
 file is safe to re-run and will migrate installs where `sleep_nights`
 was previously exposed as a view.
@@ -251,12 +252,16 @@ cd android
 On first launch, tap **Start tracking** and accept the notification
 permission prompt on Android 13+ (needed for the ongoing foreground-
 service notification to show up; the service still runs either way).
-Optionally tap **Enable step counting** and accept the activity-
-recognition prompt so the hardware step counter (accelerometer) can
-track daily steps; the UI shows today's total, and at local midnight
-the completed day's count is written to `step_events` and upserted
-into `step_nights`. The app then auto-restarts after reboot or a
-reinstall via a `BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` receiver.
+Optionally tap **Enable step counting**: the app prefers **Google
+Health Connect** (grant Steps + background read) so daily totals
+include watches, Fit, Samsung Health, and on-device steps. If Health
+Connect is missing, needs an update, or permission is denied, it falls
+back to the phone's hardware step counter (`ACTIVITY_RECOGNITION` +
+`TYPE_STEP_COUNTER`). The UI shows today's total and the active source;
+at local midnight the completed day's count is written to
+`step_events` and upserted into `step_nights`. The app then
+auto-restarts after reboot or a reinstall via a `BOOT_COMPLETED` /
+`MY_PACKAGE_REPLACED` receiver.
 
 Verify with `select * from sleep_events where user_name = 'alex-phone'
 order by event_time desc limit 20;` in the Supabase SQL editor — you

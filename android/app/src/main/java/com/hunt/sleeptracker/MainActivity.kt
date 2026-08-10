@@ -17,11 +17,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.health.connect.client.PermissionController
 import com.hunt.sleeptracker.databinding.ActivityMainBinding
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
@@ -42,8 +47,34 @@ class MainActivity : AppCompatActivity() {
         refreshUi()
     }
 
+    private val requestHealthConnectPermissions = registerForActivityResult(
+        PermissionController.createRequestPermissionResultContract(),
+    ) { granted ->
+        if (granted.containsAll(HealthConnectStepsReader.PERMISSIONS)) {
+            startTrackerService(this, enableSteps = true)
+            if (pendingHcPull) {
+                pendingHcPull = false
+                pullFromHealthConnect(requestPermissionIfNeeded = false)
+            } else {
+                Toast.makeText(this, R.string.steps_hc_enabled, Toast.LENGTH_SHORT).show()
+                refreshUi()
+            }
+        } else {
+            val wasPull = pendingHcPull
+            pendingHcPull = false
+            if (wasPull) {
+                Toast.makeText(this, R.string.steps_hc_pull_failed, Toast.LENGTH_SHORT).show()
+                refreshUi()
+            } else {
+                Toast.makeText(this, R.string.steps_hc_denied_fallback, Toast.LENGTH_LONG).show()
+                enableSensorStepCounting()
+            }
+        }
+    }
+
     private val lastEventListener: () -> Unit = { runOnUiThread { refreshUi() } }
     private var stepsListener: (() -> Unit)? = null
+    private var pendingHcPull = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,6 +90,9 @@ class MainActivity : AppCompatActivity() {
         }
         binding.enableStepsButton.setOnClickListener {
             enableStepCounting()
+        }
+        binding.pullHealthConnectButton.setOnClickListener {
+            pullFromHealthConnect()
         }
         binding.sendStepsButton.setOnClickListener {
             sendCurrentSteps()
@@ -89,8 +123,37 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun enableStepCounting() {
+        requestNotificationPermissionIfNeeded()
+        when {
+            HealthConnectStepsReader.isAvailable(this) -> {
+                CoroutineScope(Dispatchers.Main.immediate).launch {
+                    val reader = HealthConnectStepsReader(this@MainActivity)
+                    val already = withContext(Dispatchers.IO) { reader.hasPermissions() }
+                    if (already) {
+                        startTrackerService(this@MainActivity, enableSteps = true)
+                        refreshUi()
+                    } else {
+                        requestHealthConnectPermissions.launch(HealthConnectStepsReader.PERMISSIONS)
+                    }
+                }
+            }
+            HealthConnectStepsReader.needsInstallOrUpdate(this) -> {
+                Toast.makeText(this, R.string.steps_hc_install, Toast.LENGTH_LONG).show()
+                HealthConnectStepsReader.openInstallOrUpdate(this)
+                // Still allow sensor fallback without waiting on Play Store.
+                enableSensorStepCounting()
+            }
+            else -> {
+                Toast.makeText(this, R.string.steps_hc_unavailable, Toast.LENGTH_SHORT).show()
+                enableSensorStepCounting()
+            }
+        }
+    }
+
+    private fun enableSensorStepCounting() {
         if (!StepCounterTracker.hasSensor(this)) {
             Toast.makeText(this, R.string.steps_sensor_missing, Toast.LENGTH_LONG).show()
+            refreshUi()
             return
         }
         requestNotificationPermissionIfNeeded()
@@ -106,6 +169,69 @@ class MainActivity : AppCompatActivity() {
         }
         startTrackerService(this, enableSteps = true)
         refreshUi()
+    }
+
+    private fun pullFromHealthConnect(requestPermissionIfNeeded: Boolean = true) {
+        when {
+            HealthConnectStepsReader.isAvailable(this) -> {
+                CoroutineScope(Dispatchers.Main.immediate).launch {
+                    binding.pullHealthConnectButton.isEnabled = false
+                    try {
+                        val reader = HealthConnectStepsReader(this@MainActivity)
+                        val already = withContext(Dispatchers.IO) { reader.hasPermissions() }
+                        if (!already) {
+                            if (!requestPermissionIfNeeded) {
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    R.string.steps_hc_pull_failed,
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                return@launch
+                            }
+                            pendingHcPull = true
+                            requestHealthConnectPermissions.launch(
+                                HealthConnectStepsReader.PERMISSIONS,
+                            )
+                            return@launch
+                        }
+                        val steps = withContext(Dispatchers.IO) {
+                            reader.stepsForDay(LocalDate.now())
+                        }
+                        applyPulledHealthConnectSteps(steps)
+                        Toast.makeText(
+                            this@MainActivity,
+                            getString(R.string.steps_hc_pulled, steps),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    } finally {
+                        binding.pullHealthConnectButton.isEnabled = true
+                        refreshUi()
+                    }
+                }
+            }
+            HealthConnectStepsReader.needsInstallOrUpdate(this) -> {
+                Toast.makeText(this, R.string.steps_hc_install_pull, Toast.LENGTH_LONG).show()
+                HealthConnectStepsReader.openInstallOrUpdate(this)
+            }
+            else -> {
+                Toast.makeText(this, R.string.steps_hc_unavailable_pull, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun applyPulledHealthConnectSteps(steps: Int) {
+        val live = ScreenStateService.sharedDailySteps
+        if (live != null) {
+            live.setAbsoluteSteps(steps)
+            live.source = StepSource.HEALTH_CONNECT
+        } else {
+            DailySteps(this).apply {
+                setAbsoluteSteps(steps)
+                source = StepSource.HEALTH_CONNECT
+            }
+        }
+        // Keep background HC polling in sync after a manual pull.
+        startTrackerService(this, enableSteps = true)
     }
 
     private fun sendCurrentSteps() {
@@ -206,19 +332,28 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.last_event_none)
         }
 
-        val stepsPerm = StepCounterTracker.hasPermission(this)
-        val stepsOn = stepsPerm && running && ScreenStateService.stepsTracking
+        val source = ScreenStateService.sharedDailySteps?.source ?: StepSource.NONE
+        val stepsOn = running && ScreenStateService.stepsTracking
         binding.enableStepsButton.isEnabled = !stepsOn
         binding.enableStepsButton.text = getString(
-            if (stepsOn) R.string.btn_steps_enabled else R.string.btn_enable_steps,
+            when {
+                stepsOn && source == StepSource.HEALTH_CONNECT -> R.string.btn_steps_hc_enabled
+                stepsOn -> R.string.btn_steps_enabled
+                else -> R.string.btn_enable_steps
+            },
         )
 
         val count = ScreenStateService.sharedDailySteps?.stepsToday
             ?: DailySteps.peekStepsToday(this)
-        binding.dailyStepsText.text = if (stepsPerm || count > 0) {
-            getString(R.string.daily_steps, count)
-        } else {
-            getString(R.string.daily_steps_none)
+        binding.dailyStepsText.text = when {
+            stepsOn && source == StepSource.HEALTH_CONNECT ->
+                getString(R.string.daily_steps_hc, count)
+            stepsOn && source == StepSource.SENSOR ->
+                getString(R.string.daily_steps_sensor, count)
+            count > 0 ->
+                getString(R.string.daily_steps, count)
+            else ->
+                getString(R.string.daily_steps_none)
         }
 
         // Re-bind listener if the service came up after we resumed.

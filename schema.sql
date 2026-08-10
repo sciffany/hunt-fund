@@ -91,10 +91,11 @@ create policy "anyone can update sleep nights"
     using (true)
     with check (true);
 
--- Daily step counts from the Android companion (TYPE_STEP_COUNTER /
--- accelerometer). At local midnight the phone inserts one step_events row
--- for the day that just ended and upserts the matching step_nights summary
--- so the dashboard (or SQL) can read per-day totals without scanning events.
+-- Daily step counts from the Android companion (Health Connect aggregate,
+-- with hardware pedometer fallback). At local midnight the phone inserts
+-- one step_events row for the day that just ended and upserts the matching
+-- step_nights summary so the dashboard (or SQL) can read per-day totals
+-- without scanning events.
 create table if not exists public.step_events (
     id          bigint generated always as identity primary key,
     user_name   text        not null,

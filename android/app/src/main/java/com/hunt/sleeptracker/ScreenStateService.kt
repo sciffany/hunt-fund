@@ -19,10 +19,12 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import java.time.Instant
+import java.time.LocalDate
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.runBlocking
 
 /**
  * Foreground service that owns a runtime-registered [BroadcastReceiver] for
@@ -44,16 +46,19 @@ import java.util.concurrent.TimeUnit
  * [UsageStatsPoller] on the same executor to catch in-app interactions
  * (e.g. scrolling) that never produce a broadcast.
  *
- * When ACTIVITY_RECOGNITION is granted, a [StepCounterTracker] reads the
- * phone's system [android.hardware.Sensor.TYPE_STEP_COUNTER] (catching up
- * after listener gaps) and [DailySteps] flushes the previous calendar day's
- * total to Supabase (`step_events` + `step_nights`) at local midnight.
+ * Steps prefer Google Health Connect ([HealthConnectStepsReader] aggregate of
+ * [androidx.health.connect.client.records.StepsRecord]). When HC is
+ * unavailable or permission is denied, [StepCounterTracker] reads the phone's
+ * system [android.hardware.Sensor.TYPE_STEP_COUNTER]. [DailySteps] flushes
+ * the previous calendar day's total to Supabase (`step_events` +
+ * `step_nights`) at local midnight.
  */
 class ScreenStateService : Service() {
 
     private lateinit var sessionId: String
     private lateinit var poster: SupabasePoster
     private lateinit var dailySteps: DailySteps
+    private lateinit var healthConnect: HealthConnectStepsReader
 
     // Single-thread scheduler serves both the broadcast receiver's POSTs and
     // the usage-stats poller's periodic ticks; serialization is fine since
@@ -80,6 +85,7 @@ class ScreenStateService : Service() {
         super.onCreate()
         sessionId = UUID.randomUUID().toString()
         poster = SupabasePoster(this)
+        healthConnect = HealthConnectStepsReader(this)
         dailySteps = DailySteps(this) { day, steps ->
             // Callback may arrive on the sensor or scheduler thread.
             poster.postDailySteps(day, steps, sessionId)
@@ -91,8 +97,9 @@ class ScreenStateService : Service() {
 
         // Android 14+ requires the foregroundServiceType at startForeground
         // time (must match types declared in the manifest). Include "health"
-        // only when ACTIVITY_RECOGNITION is already granted — starting a
-        // health FGS without it throws SecurityException.
+        // only when the pedometer path is active — starting a health FGS
+        // without ACTIVITY_RECOGNITION throws SecurityException. HC polling
+        // uses dataSync alone.
         promoteForeground(includeHealth = StepCounterTracker.hasPermission(this))
 
         val filter = IntentFilter().apply {
@@ -128,17 +135,13 @@ class ScreenStateService : Service() {
             )
         }
 
-        startStepTrackingIfPermitted()
-        // Catch a day rollover even if the step sensor is quiet (phone on
-        // a charger overnight). Also retries permission → sensor register.
+        // Prefer HC; fall back to pedometer. Periodic tick refreshes HC
+        // aggregates, catches midnight rollover, and retries permission.
+        scheduler.execute { syncSteps() }
         midnightTick = scheduler.scheduleWithFixedDelay(
-            {
-                dailySteps.tick()
-                // Sensor registration must happen on the main thread.
-                mainHandler.post { startStepTrackingIfPermitted() }
-            },
-            MIDNIGHT_TICK_SECONDS,
-            MIDNIGHT_TICK_SECONDS,
+            { syncSteps() },
+            STEP_POLL_SECONDS,
+            STEP_POLL_SECONDS,
             TimeUnit.SECONDS,
         )
 
@@ -158,13 +161,66 @@ class ScreenStateService : Service() {
         return true
     }
 
+    /**
+     * Prefer Health Connect absolute daily totals; otherwise the hardware
+     * pedometer. Runs on the scheduler thread (HC uses [runBlocking]).
+     */
+    private fun syncSteps() {
+        val usedHc = runBlocking { tryHealthConnectSync() }
+        if (usedHc) {
+            mainHandler.post {
+                stopSensorTracker()
+                // HC reads need only dataSync FGS; drop health type if we
+                // had promoted it for a prior sensor session.
+                promoteForeground(includeHealth = false)
+                dailySteps.source = StepSource.HEALTH_CONNECT
+                stepsTracking = true
+            }
+            return
+        }
+        // Sensor path: roll day even if the sensor is quiet / not permitted.
+        dailySteps.tick()
+        // Sensor registration must happen on the main thread.
+        mainHandler.post { startStepTrackingIfPermitted() }
+    }
+
+    /**
+     * @return true when HC is available, permitted, and today's (and any
+     * completed day's) totals were applied.
+     */
+    private suspend fun tryHealthConnectSync(): Boolean {
+        if (!HealthConnectStepsReader.isAvailable(this)) return false
+        if (!healthConnect.hasPermissions()) return false
+
+        val today = LocalDate.now()
+        if (dailySteps.day != today) {
+            // Refresh the completed day's absolute total from HC before flush.
+            val completed = dailySteps.day
+            val finalCount = healthConnect.stepsForDay(completed)
+            dailySteps.replaceSteps(finalCount)
+            dailySteps.tick()
+        }
+        val steps = healthConnect.stepsForDay(today)
+        dailySteps.setAbsoluteSteps(steps)
+        Log.d(TAG, "HC steps for $today = $steps")
+        return true
+    }
+
+    private fun stopSensorTracker() {
+        stepTracker?.stop()
+        stepTracker = null
+    }
+
     private fun startStepTrackingIfPermitted() {
         if (stepTracker?.running == true) {
+            dailySteps.source = StepSource.SENSOR
             stepsTracking = true
             return
         }
         if (!StepCounterTracker.hasPermission(this)) {
-            stepsTracking = false
+            if (dailySteps.source != StepSource.HEALTH_CONNECT) {
+                stepsTracking = false
+            }
             return
         }
         // Step sensors require the health FGS type on Android 14+.
@@ -172,10 +228,12 @@ class ScreenStateService : Service() {
         if (stepTracker == null) {
             stepTracker = StepCounterTracker(this, dailySteps)
         }
-        // Periodic midnight tick retries this if registration failed earlier
+        // Periodic tick retries this if registration failed earlier
         // (permission granted late, or a prior start() returned false).
         stepsTracking = stepTracker?.start() == true
-        if (!stepsTracking) {
+        if (stepsTracking) {
+            dailySteps.source = StepSource.SENSOR
+        } else {
             Log.w(TAG, "step tracking failed to start despite permission")
         }
     }
@@ -205,7 +263,7 @@ class ScreenStateService : Service() {
         // START_STICKY so Android brings the service back if it's killed for
         // memory; the receiver gets re-registered in the fresh onCreate().
         if (intent?.action == ACTION_ENABLE_STEPS) {
-            startStepTrackingIfPermitted()
+            scheduler.execute { syncSteps() }
         }
         return START_STICKY
     }
@@ -221,7 +279,7 @@ class ScreenStateService : Service() {
         midnightTick?.cancel(false)
         midnightTick = null
         poller?.stop()
-        stepTracker?.stop()
+        stopSensorTracker()
         stepsTracking = false
         if (sharedDailySteps === dailySteps) sharedDailySteps = null
         scheduler.shutdown()
@@ -270,7 +328,8 @@ class ScreenStateService : Service() {
         private const val CHANNEL_ID = "screen_state_tracker"
         private const val NOTIFICATION_ID = 1
         private const val PERMISSION_RETRY_SECONDS = 60L
-        private const val MIDNIGHT_TICK_SECONDS = 60L
+        /** HC aggregate refresh + midnight / sensor retry interval. */
+        private const val STEP_POLL_SECONDS = 60L
         const val ACTION_ENABLE_STEPS = "com.hunt.sleeptracker.ENABLE_STEPS"
 
         /** Live counter while the service is up; null when stopped. */
@@ -278,7 +337,7 @@ class ScreenStateService : Service() {
         var sharedDailySteps: DailySteps? = null
             private set
 
-        /** True while the system step-counter listener is registered. */
+        /** True while HC polling or the system step-counter listener is active. */
         @Volatile
         var stepsTracking: Boolean = false
             private set

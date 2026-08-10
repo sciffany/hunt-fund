@@ -15,7 +15,8 @@ fun prop(key: String, default: String = ""): String =
 
 android {
     namespace = "com.hunt.sleeptracker"
-    compileSdk = 34
+    // connect-client 1.1.0 requires compileSdk 36; targetSdk stays 34.
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.hunt.sleeptracker"
@@ -84,4 +85,6 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("com.google.android.material:material:1.12.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.health.connect:connect-client:1.1.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }

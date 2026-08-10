@@ -5,14 +5,23 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.concurrent.CopyOnWriteArrayList
 
+/** Which pipeline is currently feeding [DailySteps]. */
+enum class StepSource {
+    NONE,
+    HEALTH_CONNECT,
+    SENSOR,
+}
+
 /**
  * Durable daily step total backed by SharedPreferences.
  *
- * Primary input is the phone's system [android.hardware.Sensor.TYPE_STEP_COUNTER]
- * cumulative value (kept by the hardware even while our listener is down).
- * Survives process death and reboots: on reboot the raw counter resets to 0,
- * which we detect as a drop and treat subsequent increases as new steps on
- * top of [stepsToday].
+ * Two writers (never mixed for the same active session):
+ * - Health Connect: [setAbsoluteSteps] / [replaceSteps] overwrite the day total.
+ * - Hardware pedometer: [onRawCounter] / [onStepDetected] accumulate deltas from
+ *   [android.hardware.Sensor.TYPE_STEP_COUNTER] (kept by the hardware even
+ *   while our listener is down). Survives process death and reboots: on
+ *   reboot the raw counter resets to 0, which we detect as a drop and treat
+ *   subsequent increases as new steps on top of [stepsToday].
  *
  * [onStepDetected] is only for the rare devices that lack a step counter.
  *
@@ -36,12 +45,41 @@ class DailySteps(
         private set
 
     @Volatile
+    var source: StepSource = StepSource.NONE
+
+    @Volatile
     private var lastRaw: Int = prefs.getInt(KEY_LAST_RAW, -1)
 
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
 
     fun addListener(l: () -> Unit) { listeners.add(l) }
     fun removeListener(l: () -> Unit) { listeners.remove(l) }
+
+    /**
+     * Overwrite today's step total (Health Connect absolute aggregate).
+     * Rolls the day first if needed (flushing the previous day).
+     */
+    @Synchronized
+    fun setAbsoluteSteps(count: Int) {
+        rollDayIfNeeded()
+        val next = count.coerceAtLeast(0)
+        if (next == stepsToday) return
+        stepsToday = next
+        persist()
+        notifyListeners()
+    }
+
+    /**
+     * Replace the stored total for the currently tracked [day] without
+     * rolling. Used to refresh yesterday's HC aggregate immediately before
+     * a midnight flush.
+     */
+    @Synchronized
+    fun replaceSteps(count: Int) {
+        stepsToday = count.coerceAtLeast(0)
+        persist()
+        notifyListeners()
+    }
 
     /** Apply a new TYPE_STEP_COUNTER reading. Safe to call from any thread. */
     @Synchronized

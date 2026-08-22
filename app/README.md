@@ -1,0 +1,61 @@
+# Group Fund app
+
+Standalone Next.js app for Google sign-in, usernames, and groups. People join a group only after they accept an invite.
+
+This is separate from [`../dashboard`](../dashboard): its own Neon database, no shared auth, no comic dashboard styling.
+
+## Stack
+
+- Next.js 15 (App Router)
+- Prisma + Neon Postgres
+- Auth.js (Google)
+
+## Setup
+
+1. Create a [Neon](https://neon.tech) project and copy the pooled and direct connection strings.
+2. Create a Google OAuth client (Web application). Authorized redirect URI:
+
+   `http://localhost:3000/api/auth/callback/google`
+
+3. Configure env:
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+   Fill in:
+
+   - `DATABASE_URL` — Neon pooled URL
+   - `DIRECT_URL` — Neon direct URL (used by `prisma migrate`)
+   - `AUTH_SECRET` — `openssl rand -base64 32`
+   - `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET`
+   - `AUTH_URL` — `http://localhost:3000`
+
+4. Install and migrate:
+
+   ```bash
+   npm install
+   npx prisma migrate dev
+   npm run dev
+   ```
+
+   Open [http://localhost:3000](http://localhost:3000).
+
+## Scripts
+
+| Script | Purpose |
+| --- | --- |
+| `npm run dev` | Local dev server |
+| `npm run build` | Generate Prisma client and build |
+| `npm run db:migrate` | Create / apply Prisma migrations |
+| `npm run db:push` | Push schema without a migration (dev only) |
+| `npm run db:studio` | Prisma Studio |
+
+## Deploy (Vercel)
+
+1. Import the `hunt-fund` repo.
+2. Set the root directory to `app`.
+3. Add the same environment variables (Production + Preview).
+4. Set `AUTH_URL` to the Vercel URL and add that origin’s Google callback:
+
+   `https://<your-domain>/api/auth/callback/google`

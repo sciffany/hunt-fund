@@ -29,6 +29,13 @@ enum PenaltyUnit {
   OTHER
 }
 
+enum SleepEventType {
+  APP_START
+  ACTIVITY
+  APP_CLOSE
+  PHONE_ACTIVITY
+}
+
 model User {
   id            String    @id @default(cuid())
   name          String?
@@ -46,6 +53,10 @@ model User {
   memberships     GroupMember[]
   sentInvites     GroupInvite[] @relation("InviteSender")
   receivedInvites GroupInvite[] @relation("InviteRecipient")
+  sleepEvents     SleepEvent[]
+  sleepNights     SleepNight[]
+  stepEvents      StepEvent[]
+  stepNights      StepNight[]
 }
 
 model Account {
@@ -163,6 +174,61 @@ model SleepPenalty {
   updatedAt     DateTime    @updatedAt
 
   @@unique([groupMemberId, effectiveFrom])
+}
+
+model SleepEvent {
+  id        String         @id @default(cuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventType SleepEventType
+  eventTime DateTime       @default(now())
+  sessionId String?        @db.Uuid
+  createdAt DateTime       @default(now())
+
+  @@index([userId, eventTime(sort: Desc)])
+  @@index([eventType, eventTime(sort: Desc)])
+}
+
+/// Cached per-night summary: one row per (user, night).
+model SleepNight {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Night-anchor calendar date this summary covers.
+  night        DateTime @db.Date
+  lastActivity DateTime?
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, night])
+  @@index([night(sort: Desc)])
+}
+
+model StepEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Calendar day these steps were counted for.
+  day       DateTime @db.Date
+  stepCount Int
+  eventTime DateTime @default(now())
+  sessionId String?  @db.Uuid
+  createdAt DateTime @default(now())
+
+  @@index([userId, day(sort: Desc)])
+}
+
+/// Cached per-day step total: one row per (user, night).
+model StepNight {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Calendar day this step total covers (column name mirrors SleepNight).
+  night     DateTime @db.Date
+  steps     Int
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, night])
+  @@index([night(sort: Desc)])
 }
 
 model GroupInvite {

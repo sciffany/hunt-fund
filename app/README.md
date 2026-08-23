@@ -41,6 +41,11 @@ This is separate from [`../dashboard`](../dashboard): its own Neon database, no 
 
    Open [http://localhost:3000](http://localhost:3000).
 
+   In `next dev` only, the sign-in page also offers **Dev Owner** and **Dev
+   Member**. Those create two local users and a sample group (`Dev Sleep Club`)
+   so you can click through the app without Google. The buttons and provider
+   are disabled in production builds.
+
 ## Scripts
 
 | Script | Purpose |

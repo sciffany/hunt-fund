@@ -94,7 +94,9 @@ export async function inviteToGroup(
   if (!identifier) return { error: "Enter a username or email." };
 
   const membership = await requireMembership(user.id, groupId);
-  if (!membership) return { error: "You are not a member of this group." };
+  if (!membership || membership.role !== "OWNER") {
+    return { error: "Only the owner can invite people." };
+  }
 
   const resolved = await findOrCreateRecipient(identifier);
   if ("error" in resolved) return { error: resolved.error };
@@ -144,6 +146,7 @@ export async function inviteToGroup(
   }
 
   revalidatePath(`/groups/${groupId}`);
+  revalidatePath(`/groups/${groupId}/settings`);
   revalidatePath("/home");
   const label = recipient.username
     ? `@${recipient.username}`
@@ -177,6 +180,7 @@ export async function acceptInvite(formData: FormData) {
 
   revalidatePath("/home");
   revalidatePath(`/groups/${invite.groupId}`);
+  revalidatePath(`/groups/${invite.groupId}/settings`);
   redirect(`/groups/${invite.groupId}`);
 }
 
@@ -199,6 +203,7 @@ export async function declineInvite(formData: FormData) {
 
   revalidatePath("/home");
   revalidatePath(`/groups/${invite.groupId}`);
+  revalidatePath(`/groups/${invite.groupId}/settings`);
 }
 
 export async function leaveGroup(formData: FormData) {

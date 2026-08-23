@@ -29,6 +29,7 @@ async function requireOwnedGroup(userId: string, groupId: string) {
 
 function revalidateGroup(groupId: string) {
   revalidatePath(`/groups/${groupId}`);
+  revalidatePath(`/groups/${groupId}/settings`);
 }
 
 function uniqueConstraintError(error: unknown) {

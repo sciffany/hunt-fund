@@ -1,10 +1,18 @@
 import Link from "next/link";
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  wide = false,
+}: {
+  children: React.ReactNode;
+  wide?: boolean;
+}) {
+  const width = wide ? "max-w-5xl" : "max-w-3xl";
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-neutral-200 bg-white">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-3">
+        <div className={`mx-auto flex ${width} items-center justify-between px-4 py-3`}>
           <Link href="/home" className="text-sm font-medium">
             Group Fund
           </Link>
@@ -18,7 +26,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
         </div>
       </header>
-      <main className="mx-auto max-w-3xl px-4 py-8">{children}</main>
+      <main className={`mx-auto ${width} px-4 py-8`}>{children}</main>
     </div>
   );
 }

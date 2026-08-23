@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { DevSignInButtons } from "@/components/DevSignInButtons";
 import { GoogleSignInButton } from "@/components/GoogleSignInButton";
 import { getCurrentUser } from "@/lib/session";
 
@@ -18,6 +19,7 @@ export default async function LandingPage() {
       </p>
       <div className="mt-8">
         <GoogleSignInButton />
+        <DevSignInButtons />
       </div>
       <p className="mt-4 text-center text-sm text-neutral-500">
         Already have an account?{" "}

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { DevSignInButtons } from "@/components/DevSignInButtons";
 import { GoogleSignInButton } from "@/components/GoogleSignInButton";
 import { getCurrentUser } from "@/lib/session";
 
@@ -21,6 +22,7 @@ export default async function LoginPage() {
       </p>
       <div className="mt-8">
         <GoogleSignInButton />
+        <DevSignInButtons />
       </div>
     </main>
   );

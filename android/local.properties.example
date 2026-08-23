@@ -1,13 +1,14 @@
 # Copy to local.properties and fill in your values.
 # This file is read at build time by android/app/build.gradle.kts and baked
 # into BuildConfig fields. user.name is the default username; it can also be
-# changed at runtime in the app settings (SharedPreferences).
+# changed at runtime in the app settings (SharedPreferences). It must match
+# the hunt-fund account username (the Neon-backed Next.js app).
 
-supabase.url=https://xxxx.supabase.co
-supabase.key=eyJhbGciOi...
-user.name=alex-phone
+app.url=https://groupfundz.vercel.app
+ingest.token=replace-with-INGEST_TOKEN
+user.name=tiffany
 
-# Optional. Local-hour window for phone_activity logging (matches desktop
+# Optional. Local-hour window for PHONE_ACTIVITY logging (matches desktop
 # WINDOW_START_HOUR / WINDOW_END_HOUR). Defaults skip 6am–8pm.
 #window.startHour=20
 #window.endHour=6

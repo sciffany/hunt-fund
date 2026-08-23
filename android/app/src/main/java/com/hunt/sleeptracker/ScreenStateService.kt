@@ -5,7 +5,6 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.app.usage.UsageStatsManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -28,44 +27,38 @@ import kotlinx.coroutines.runBlocking
 
 /**
  * Foreground service that owns a runtime-registered [BroadcastReceiver] for
- * SCREEN_ON / SCREEN_OFF / USER_PRESENT.
+ * SCREEN_ON / SCREEN_OFF / USER_PRESENT and a [PhoneActivityPoller].
  *
  * Broadcasts are received only so the in-app [LastEvent] debug UI can show
  * that the service is alive. None of them are posted as `phone_activity`:
- * screen-on/off fire from tap-to-wake, ambient display, and timeouts, and
- * unlock alone is too noisy overnight (face/fingerprint wakes, pocket
- * unlocks, checking the time). Only unlocked, on-screen app interactions
- * counted by [UsageStatsPoller] advance last-activity, and only inside the
- * recording window (default 8pm–6am local).
+ * screen-on/off fire from tap-to-wake, ambient display, and timeouts.
+ * [PhoneActivityPoller] posts a heartbeat every 2 minutes while the phone
+ * is unlocked with the screen on, and only inside the recording window
+ * (default 8pm–6am local).
  *
  * Those three broadcasts are all "protected" — a manifest-declared receiver
  * never fires for them, so the service exists purely to keep our runtime
  * receiver registered while the phone is idle.
  *
- * When the user has granted `PACKAGE_USAGE_STATS`, we additionally run a
- * [UsageStatsPoller] on the same executor to catch in-app interactions
- * (e.g. scrolling) that never produce a broadcast.
- *
  * Steps prefer Google Health Connect ([HealthConnectStepsReader] aggregate of
  * [androidx.health.connect.client.records.StepsRecord]). When HC is
  * unavailable or permission is denied, [StepCounterTracker] reads the phone's
  * system [android.hardware.Sensor.TYPE_STEP_COUNTER]. [DailySteps] flushes
- * the previous calendar day's total to Supabase (`step_events` +
- * `step_nights`) at local midnight.
+ * the last 7 Health Connect days (or the completed sensor day) to Neon
+ * via the hunt-fund ingest API at local midnight.
  */
 class ScreenStateService : Service() {
 
     private lateinit var sessionId: String
-    private lateinit var poster: SupabasePoster
+    private lateinit var poster: IngestPoster
     private lateinit var dailySteps: DailySteps
     private lateinit var healthConnect: HealthConnectStepsReader
 
-    // Single-thread scheduler serves both the broadcast receiver's POSTs and
-    // the usage-stats poller's periodic ticks; serialization is fine since
-    // none of this is latency-critical.
+    // Single-thread scheduler serves the phone-activity heartbeat and the
+    // step-sync ticks; serialization is fine since none of this is
+    // latency-critical.
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
-    private var poller: UsageStatsPoller? = null
-    private var permissionRetry: ScheduledFuture<*>? = null
+    private var poller: PhoneActivityPoller? = null
     private var midnightTick: ScheduledFuture<*>? = null
     private var stepTracker: StepCounterTracker? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -76,19 +69,19 @@ class ScreenStateService : Service() {
             val ts = Instant.now()
             Log.d(TAG, "received $action at $ts")
             LastEvent.update(action, ts)
-            // No POST from broadcasts — unlock-only was a common overnight
-            // false positive. UsageStatsPoller owns phone_activity rows.
+            // No POST from broadcasts — PhoneActivityPoller owns
+            // PHONE_ACTIVITY rows on a 2-minute unlock heartbeat.
         }
     }
 
     override fun onCreate() {
         super.onCreate()
         sessionId = UUID.randomUUID().toString()
-        poster = SupabasePoster(this)
+        poster = IngestPoster(this)
         healthConnect = HealthConnectStepsReader(this)
         dailySteps = DailySteps(this) { day, steps ->
             // Callback may arrive on the sensor or scheduler thread.
-            poster.postDailySteps(day, steps, sessionId)
+            pushRecentSteps(DaySteps(day, steps))
         }
         // If the process was dead across midnight, flush the stored day now.
         dailySteps.tick()
@@ -116,24 +109,7 @@ class ScreenStateService : Service() {
             registerReceiver(receiver, filter)
         }
 
-        if (!startPollerIfPermitted()) {
-            Log.i(TAG, "usage-stats permission not granted; polling disabled")
-            // The user can grant PACKAGE_USAGE_STATS from Settings while the
-            // service is already running. Cheap periodic re-check picks it up
-            // without requiring a manual Stop / Start.
-            permissionRetry = scheduler.scheduleWithFixedDelay(
-                {
-                    if (startPollerIfPermitted()) {
-                        Log.i(TAG, "usage-stats permission granted; poller started")
-                        permissionRetry?.cancel(false)
-                        permissionRetry = null
-                    }
-                },
-                PERMISSION_RETRY_SECONDS,
-                PERMISSION_RETRY_SECONDS,
-                TimeUnit.SECONDS,
-            )
-        }
+        poller = PhoneActivityPoller(this, poster, sessionId, scheduler).also { it.start() }
 
         // Prefer HC; fall back to pedometer. Periodic tick refreshes HC
         // aggregates, catches midnight rollover, and retries permission.
@@ -146,19 +122,6 @@ class ScreenStateService : Service() {
         )
 
         Log.i(TAG, "ScreenStateService started, session=$sessionId")
-    }
-
-    /**
-     * Returns true iff a poller is already running (or was just started).
-     * Safe to call repeatedly.
-     */
-    private fun startPollerIfPermitted(): Boolean {
-        if (poller != null) return true
-        if (!UsageStatsPoller.hasPermission(this)) return false
-        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
-        poller = UsageStatsPoller(this, usm, poster, sessionId, scheduler).also { it.start() }
-        Log.i(TAG, "usage-stats polling enabled")
-        return true
     }
 
     /**
@@ -204,6 +167,24 @@ class ScreenStateService : Service() {
         dailySteps.setAbsoluteSteps(steps)
         Log.d(TAG, "HC steps for $today = $steps")
         return true
+    }
+
+    /**
+     * Prefer the last [HealthConnectStepsReader.HISTORY_DAYS] of Health
+     * Connect totals; otherwise post the single [fallback] day we already
+     * have (sensor midnight flush).
+     */
+    private fun pushRecentSteps(fallback: DaySteps) {
+        scheduler.execute {
+            val days = runBlocking { loadStepsToPush(fallback) }
+            poster.postDailySteps(days, sessionId)
+        }
+    }
+
+    private suspend fun loadStepsToPush(fallback: DaySteps): List<DaySteps> {
+        if (!HealthConnectStepsReader.isAvailable(this)) return listOf(fallback)
+        if (!healthConnect.hasPermissions()) return listOf(fallback)
+        return healthConnect.stepsForLastDays(HealthConnectStepsReader.HISTORY_DAYS)
     }
 
     private fun stopSensorTracker() {
@@ -274,8 +255,6 @@ class ScreenStateService : Service() {
         } catch (_: IllegalArgumentException) {
             // already unregistered
         }
-        permissionRetry?.cancel(false)
-        permissionRetry = null
         midnightTick?.cancel(false)
         midnightTick = null
         poller?.stop()
@@ -327,7 +306,6 @@ class ScreenStateService : Service() {
         private const val TAG = "ScreenStateService"
         private const val CHANNEL_ID = "screen_state_tracker"
         private const val NOTIFICATION_ID = 1
-        private const val PERMISSION_RETRY_SECONDS = 60L
         /** HC aggregate refresh + midnight / sensor retry interval. */
         private const val STEP_POLL_SECONDS = 60L
         const val ACTION_ENABLE_STEPS = "com.hunt.sleeptracker.ENABLE_STEPS"

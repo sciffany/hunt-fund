@@ -5,11 +5,8 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
-import android.util.Log
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
@@ -100,9 +97,6 @@ class MainActivity : AppCompatActivity() {
         binding.stopButton.setOnClickListener {
             stopService(Intent(this, ScreenStateService::class.java))
             refreshUi()
-        }
-        binding.grantUsageAccessButton.setOnClickListener {
-            openUsageAccessSettings()
         }
         binding.saveUsernameButton.setOnClickListener {
             onSaveUsernameClicked()
@@ -235,17 +229,40 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sendCurrentSteps() {
-        val configOk = BuildConfig.SUPABASE_URL.isNotBlank() &&
-            BuildConfig.SUPABASE_KEY.isNotBlank()
-        if (!configOk) {
+        if (!IngestPoster.isConfigured()) {
             Toast.makeText(this, R.string.steps_send_failed, Toast.LENGTH_SHORT).show()
             return
+        }
+        binding.sendStepsButton.isEnabled = false
+        CoroutineScope(Dispatchers.Main.immediate).launch {
+            try {
+                val days = withContext(Dispatchers.IO) { loadStepsToSend() }
+                IngestPoster(this@MainActivity).postDailySteps(
+                    days,
+                    UUID.randomUUID().toString(),
+                )
+                Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.steps_sent, days.size),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            } finally {
+                binding.sendStepsButton.isEnabled = true
+            }
+        }
+    }
+
+    private suspend fun loadStepsToSend(): List<DaySteps> {
+        if (HealthConnectStepsReader.isAvailable(this)) {
+            val reader = HealthConnectStepsReader(this)
+            if (reader.hasPermissions()) {
+                return reader.stepsForLastDays(HealthConnectStepsReader.HISTORY_DAYS)
+            }
         }
         val live = ScreenStateService.sharedDailySteps
         val day = live?.day ?: LocalDate.now()
         val count = live?.stepsToday ?: DailySteps.peekStepsToday(this)
-        SupabasePoster(this).postDailySteps(day, count, UUID.randomUUID().toString())
-        Toast.makeText(this, getString(R.string.steps_sent, count), Toast.LENGTH_SHORT).show()
+        return listOf(DaySteps(day, count))
     }
 
     private fun onSaveUsernameClicked() {
@@ -309,15 +326,9 @@ class MainActivity : AppCompatActivity() {
             binding.usernameInput.setText(userName)
         }
 
-        val configOk = BuildConfig.SUPABASE_URL.isNotBlank() &&
-            BuildConfig.SUPABASE_KEY.isNotBlank()
+        val configOk = IngestPoster.isConfigured()
         binding.configWarning.visibility =
             if (configOk) View.GONE else View.VISIBLE
-
-        val usageOk = UsageStatsPoller.hasPermission(this)
-        val usageVis = if (usageOk) View.GONE else View.VISIBLE
-        binding.usageAccessWarning.visibility = usageVis
-        binding.grantUsageAccessButton.visibility = usageVis
 
         val action = LastEvent.action
         val at = LastEvent.at
@@ -358,27 +369,6 @@ class MainActivity : AppCompatActivity() {
 
         // Re-bind listener if the service came up after we resumed.
         if (running && stepsListener == null) attachStepsListener()
-    }
-
-    private fun openUsageAccessSettings() {
-        // Try the app-specific deep link first (some OEMs honor the package
-        // URI, jumping straight to our row); fall back to the generic list.
-        val specific = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
-            data = Uri.fromParts("package", packageName, null)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        val generic = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        try {
-            startActivity(specific)
-        } catch (_: Throwable) {
-            try {
-                startActivity(generic)
-            } catch (t: Throwable) {
-                Log.w("MainActivity", "no usage-access settings screen: ${t.message}")
-            }
-        }
     }
 
     private fun requestNotificationPermissionIfNeeded() {

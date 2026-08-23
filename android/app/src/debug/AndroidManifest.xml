@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Local Next.js ingest (http://10.0.2.2:3000 or a LAN IP). -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

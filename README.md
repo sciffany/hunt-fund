@@ -210,30 +210,28 @@ Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" |
 ## Android
 
 Companion Android app in [`android/`](./android/). It runs a foreground
-service that listens for the system broadcasts
+service that POSTs one `PHONE_ACTIVITY` row to the hunt-fund ingest API
+(`/api/ingest/sleep`) every 2 minutes while the phone is unlocked with
+the screen on, only inside the local recording window (default 8pm–6am).
+That event type is kept distinct from the desktop tracker's `ACTIVITY`
+rows. Brief unlocks (checking the time, pocket wakes) that end before
+the next tick are ignored.
 
-- `ACTION_SCREEN_ON`
-- `ACTION_SCREEN_OFF`
-- `ACTION_USER_PRESENT`
-
-and POSTs one `phone_activity` row to `sleep_events` per broadcast — a
-phone-specific event type kept distinct from the desktop tracker's
-`activity` rows so the two sources can be filtered separately. The
-dashboard's `maxActivityFor` treats both types as "user was active", so
-phone events count toward "last activity" out of the box.
-
-All three broadcasts are protected system intents, so a manifest-declared
-receiver never fires for them; the foreground service exists to keep our
-runtime-registered receiver alive while the phone is idle.
+`ACTION_SCREEN_ON` / `ACTION_SCREEN_OFF` / `ACTION_USER_PRESENT` are
+still received so the in-app debug UI can show the service is alive;
+none of those broadcasts are posted. They are protected system intents,
+so a manifest-declared receiver never fires for them — the foreground
+service exists to keep the runtime receiver and the 2-minute heartbeat
+alive while the phone is idle.
 
 ### 1. Configure
 
 ```bash
 cp android/local.properties.example android/local.properties
 # then edit android/local.properties with your values:
-#   supabase.url=...
-#   supabase.key=...
-#   user.name=alex-phone
+#   app.url=https://groupfundz.vercel.app
+#   ingest.token=...     # same INGEST_TOKEN as the Next.js app
+#   user.name=tiffany    # must match the hunt-fund username
 ```
 
 These are baked into `BuildConfig` at build time, so rebuild the APK if
@@ -258,24 +256,15 @@ include watches, Fit, Samsung Health, and on-device steps. If Health
 Connect is missing, needs an update, or permission is denied, it falls
 back to the phone's hardware step counter (`ACTIVITY_RECOGNITION` +
 `TYPE_STEP_COUNTER`). The UI shows today's total and the active source;
-at local midnight the completed day's count is written to
-`step_events` and upserted into `step_nights`. The app then
+at local midnight (and whenever you tap **Send steps**) the last 7
+Health Connect days are POSTed to `/api/ingest/steps`. The app then
 auto-restarts after reboot or a reinstall via a `BOOT_COMPLETED` /
 `MY_PACKAGE_REPLACED` receiver.
 
-Verify with `select * from sleep_events where user_name = 'alex-phone'
-order by event_time desc limit 20;` in the Supabase SQL editor — you
-should see a new row every time you press the power button or unlock
-the phone. After a midnight flush,
-`select * from step_nights order by night desc limit 5;` shows daily
-step totals.
-
 ### Security caveat
 
-The Supabase anon key is compiled into the APK. Anyone with the APK can
-extract it. This is the same trust level as `.env` on the desktop
-tracker — fine when RLS on `sleep_events` limits the anon role to
-insert/select on this one table, but worth calling out.
+The ingest token is compiled into the APK. Anyone with the APK can
+extract it. Treat `INGEST_TOKEN` like a write password for tracker rows.
 
 ## Running in the foreground (for testing)
 

@@ -5,7 +5,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Tiny in-memory store shared between [ScreenStateService] and [MainActivity]
- * so the UI can show the most recent broadcast without going back to Supabase.
+ * so the UI can show the most recent broadcast without going back to the server.
  * Cleared when the process dies; the durable record is in the DB.
  */
 object LastEvent {

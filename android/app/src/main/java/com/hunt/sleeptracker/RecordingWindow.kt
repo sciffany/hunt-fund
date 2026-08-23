@@ -4,7 +4,7 @@ import java.time.Instant
 import java.time.ZoneId
 
 /**
- * Local-time window during which `phone_activity` rows are recorded.
+ * Local-time window during which `PHONE_ACTIVITY` rows are recorded.
  * Matches the desktop tracker's WINDOW_START_HOUR / WINDOW_END_HOUR
  * (default 20 → 6, i.e. 8pm–6am). When start > end the window wraps
  * midnight.

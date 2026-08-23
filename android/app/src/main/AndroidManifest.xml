@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -29,15 +28,6 @@
     <uses-feature
         android:name="android.hardware.sensor.stepdetector"
         android:required="false" />
-    <!--
-      Signature-level permission the user must grant manually via
-      Settings → Special app access → Usage access. Lets us call
-      UsageStatsManager.queryEvents to detect in-app interactions
-      (e.g. scrolling) while the screen stays on.
-    -->
-    <uses-permission
-        android:name="android.permission.PACKAGE_USAGE_STATS"
-        tools:ignore="ProtectedPermissions" />
 
     <!-- Resolve Health Connect on Android 13 and lower (separate APK). -->
     <queries>

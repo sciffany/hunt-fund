@@ -11,8 +11,8 @@
     <string name="btn_steps_hc_enabled">Health Connect steps on</string>
     <string name="btn_pull_health_connect">Pull from Health Connect</string>
     <string name="btn_send_steps">Send steps</string>
-    <string name="steps_sent">Sent %1$d steps for today</string>
-    <string name="steps_send_failed">Could not send steps — check Supabase config.</string>
+    <string name="steps_sent">Sent %1$d day(s) of steps</string>
+    <string name="steps_send_failed">Could not send steps — check app.url and ingest.token.</string>
     <string name="steps_hc_pulled">Pulled %1$d steps from Health Connect</string>
     <string name="steps_hc_pull_failed">Could not read steps from Health Connect.</string>
     <string name="steps_hc_install_pull">Install or update Health Connect, then try again.</string>
@@ -20,7 +20,7 @@
     <string name="btn_stop">Stop tracking</string>
     <string name="status_running">Running as %1$s</string>
     <string name="status_stopped">Stopped</string>
-    <string name="config_missing">SUPABASE_URL or SUPABASE_KEY is empty. Set them in android/local.properties and rebuild.</string>
+    <string name="config_missing">app.url or ingest.token is empty. Set them in android/local.properties and rebuild.</string>
     <string name="last_event_none">No events posted yet this session.</string>
     <string name="last_event">Last event: %1$s at %2$s</string>
     <string name="daily_steps_none">Steps: —</string>
@@ -33,15 +33,13 @@
     <string name="steps_hc_denied_fallback">Health Connect permission denied — trying the phone step sensor.</string>
     <string name="steps_hc_unavailable">Health Connect unavailable — trying the phone step sensor.</string>
     <string name="steps_hc_install">Install or update Health Connect, then try again. Falling back to the phone sensor for now.</string>
-    <string name="usage_access_missing">Usage access not granted. Without it, in-app activity (e.g. scrolling) isn\'t logged while the screen stays on — only screen on/off broadcasts are.</string>
-    <string name="btn_grant_usage_access">Grant usage access</string>
     <string name="username_label">Username</string>
     <string name="btn_save_username">Save username</string>
     <string name="username_blank">Username cannot be blank.</string>
     <string name="username_saved">Username saved as %1$s</string>
     <string name="username_unchanged">Username is already %1$s</string>
     <string name="username_change_title">Change username?</string>
-    <string name="username_change_message">New events will be logged as \"%1$s\". Existing history under \"%2$s\" will stay under that name unless you migrate it manually. The dashboard only shows names listed in PEOPLE.</string>
+    <string name="username_change_message">New events will be logged as \"%1$s\". This must match the hunt-fund account username. Existing history under \"%2$s\" will stay under that name unless you migrate it manually.</string>
     <string name="username_change_confirm">Change</string>
     <string name="username_change_cancel">Cancel</string>
 </resources>

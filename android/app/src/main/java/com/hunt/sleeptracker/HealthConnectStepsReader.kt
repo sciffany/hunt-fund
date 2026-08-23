@@ -41,6 +41,19 @@ class HealthConnectStepsReader(
     }
 
     /**
+     * Aggregate step counts for the last [count] local calendar days, oldest first
+     * (through today). Days with no Health Connect data are 0.
+     */
+    suspend fun stepsForLastDays(count: Int = HISTORY_DAYS): List<DaySteps> {
+        val today = LocalDate.now(zone)
+        val n = count.coerceAtLeast(1)
+        return (n - 1 downTo 0).map { offset ->
+            val day = today.minusDays(offset.toLong())
+            DaySteps(day, stepsForDay(day))
+        }
+    }
+
+    /**
      * Aggregate step count for the local calendar [day] (midnight → next midnight).
      * Returns 0 when there is no data in range.
      */
@@ -65,6 +78,7 @@ class HealthConnectStepsReader(
     companion object {
         private const val TAG = "HealthConnectSteps"
         private const val HC_PACKAGE = "com.google.android.apps.healthdata"
+        const val HISTORY_DAYS = 7
 
         val PERMISSIONS: Set<String> = setOf(
             HealthPermission.getReadPermission(StepsRecord::class),

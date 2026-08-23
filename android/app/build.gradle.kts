@@ -27,13 +27,13 @@ android {
 
         buildConfigField(
             "String",
-            "SUPABASE_URL",
-            "\"${prop("supabase.url").trimEnd('/')}\"",
+            "APP_URL",
+            "\"${prop("app.url").trimEnd('/')}\"",
         )
         buildConfigField(
             "String",
-            "SUPABASE_KEY",
-            "\"${prop("supabase.key")}\"",
+            "INGEST_TOKEN",
+            "\"${prop("ingest.token")}\"",
         )
         buildConfigField(
             "String",

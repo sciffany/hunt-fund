@@ -2,15 +2,36 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
-import { GroupMonthDashboard } from "@/components/GroupMonthDashboard";
+import {
+  GroupMonthDashboard,
+  type DashboardCell,
+} from "@/components/GroupMonthDashboard";
 import { leaveGroup } from "@/lib/actions/groups";
 import {
   currentYearMonth,
+  datesInMonth,
   parseYearMonth,
 } from "@/lib/month";
+import {
+  coveringPenalty,
+  formatPenaltyAmount,
+  formatPenaltyCharge,
+  nightlyPenaltyCents,
+} from "@/lib/penalty";
 import { prisma } from "@/lib/prisma";
 import { displayNameOf, requireOnboardedUser } from "@/lib/session";
-import { DEFAULT_TIMEZONE, todayInTimeZone } from "@/lib/sleep";
+import {
+  DEFAULT_TIMEZONE,
+  bedtimeForNight,
+  bedtimeInstant,
+  defaultSleepTimes,
+  formatDateOnly,
+  formatRoundedLastActivity,
+  nightOverdue,
+  parseDateOnly,
+  parseSleepTimes,
+  todayInTimeZone,
+} from "@/lib/sleep";
 
 export const metadata: Metadata = {
   title: "Group",
@@ -34,6 +55,12 @@ export default async function GroupPage({
 
   const isOwner = membership.role === "OWNER";
 
+  const month = parseYearMonth(monthParam) ?? currentYearMonth(DEFAULT_TIMEZONE);
+  const dates = datesInMonth(month);
+  const monthStart = parseDateOnly(dates[0]);
+  const monthEnd = parseDateOnly(dates[dates.length - 1]);
+  if (!monthStart || !monthEnd) notFound();
+
   const group = await prisma.group.findUnique({
     where: { id },
     include: {
@@ -41,11 +68,32 @@ export default async function GroupPage({
         include: {
           user: {
             select: {
+              id: true,
               displayName: true,
               name: true,
               username: true,
               email: true,
+              sleepNights: {
+                where: { night: { gte: monthStart, lte: monthEnd } },
+                select: { night: true, lastActivity: true },
+              },
             },
+          },
+          sleepSchedules: {
+            select: { effectiveFrom: true, timezone: true, times: true },
+            orderBy: { effectiveFrom: "asc" },
+          },
+          sleepOverrides: {
+            select: { date: true, timezone: true, halfHoursPast8pm: true },
+          },
+          sleepPenalties: {
+            select: {
+              effectiveFrom: true,
+              amount: true,
+              unit: true,
+              unitLabel: true,
+            },
+            orderBy: { effectiveFrom: "asc" },
           },
         },
         orderBy: { joinedAt: "asc" },
@@ -54,8 +102,6 @@ export default async function GroupPage({
   });
 
   if (!group) notFound();
-
-  const month = parseYearMonth(monthParam) ?? currentYearMonth(DEFAULT_TIMEZONE);
 
   return (
     <AppShell wide>
@@ -98,10 +144,79 @@ export default async function GroupPage({
         groupId={group.id}
         month={month}
         today={todayInTimeZone(DEFAULT_TIMEZONE)}
-        members={group.members.map((member) => ({
-          id: member.id,
-          displayName: displayNameOf(member.user),
-        }))}
+        members={group.members.map((member) => {
+          const schedules = member.sleepSchedules.map((schedule) => ({
+            effectiveFrom: formatDateOnly(schedule.effectiveFrom),
+            timezone: schedule.timezone,
+            times: parseSleepTimes(schedule.times) ?? defaultSleepTimes(),
+          }));
+          const overrides = member.sleepOverrides.map((override) => ({
+            date: formatDateOnly(override.date),
+            timezone: override.timezone,
+            halfHoursPast8pm: override.halfHoursPast8pm,
+          }));
+          const penalties = member.sleepPenalties.map((penalty) => ({
+            effectiveFrom: formatDateOnly(penalty.effectiveFrom),
+            amount: formatPenaltyAmount(penalty.amount),
+            unit: penalty.unit,
+            unitLabel: penalty.unitLabel,
+          }));
+          const nights = new Map(
+            member.user.sleepNights.map((night) => [
+              formatDateOnly(night.night),
+              night.lastActivity,
+            ]),
+          );
+          const cells: Record<string, DashboardCell> = {};
+          let totalCents = 0;
+          for (const date of dates) {
+            const bedtimeSpec = bedtimeForNight(schedules, overrides, date);
+            const lastActivity = nights.get(date);
+            const penalty = coveringPenalty(penalties, date);
+            if (!lastActivity) {
+              cells[date] = { time: null, overdue: false, penaltyLabel: null };
+              continue;
+            }
+
+            const { overdue, halfHours } = nightOverdue(
+              lastActivity,
+              bedtimeInstant(
+                date,
+                bedtimeSpec.halfHoursPast8pm,
+                bedtimeSpec.timezone,
+              ),
+            );
+            const cents = penalty
+              ? nightlyPenaltyCents(halfHours, penalty.amount)
+              : 0;
+            totalCents += cents;
+            cells[date] = {
+              time: formatRoundedLastActivity(
+                lastActivity,
+                bedtimeSpec.timezone,
+              ),
+              overdue,
+              penaltyLabel: overdue
+                ? formatPenaltyCharge(cents, penalty?.unit, penalty?.unitLabel)
+                : null,
+            };
+          }
+
+          const latestPenalty = coveringPenalty(
+            penalties,
+            dates[dates.length - 1],
+          );
+          return {
+            id: member.id,
+            displayName: displayNameOf(member.user),
+            cells,
+            totalPenalty: formatPenaltyCharge(
+              totalCents,
+              latestPenalty?.unit,
+              latestPenalty?.unitLabel,
+            ),
+          };
+        })}
       />
     </AppShell>
   );

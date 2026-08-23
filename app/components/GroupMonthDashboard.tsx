@@ -10,9 +10,17 @@ import {
   type YearMonth,
 } from "@/lib/month";
 
+export type DashboardCell = {
+  time: string | null;
+  overdue: boolean;
+  penaltyLabel: string | null;
+};
+
 export type DashboardMember = {
   id: string;
   displayName: string;
+  cells: Record<string, DashboardCell>;
+  totalPenalty: string;
 };
 
 export function GroupMonthDashboard({
@@ -51,12 +59,23 @@ export function GroupMonthDashboard({
       </div>
 
       <div className="mt-4 overflow-x-auto rounded-md border border-neutral-200 bg-white">
-        <table className="min-w-full border-collapse text-sm">
+        <table
+          className="w-full table-fixed border-collapse text-sm"
+          style={{
+            minWidth: `calc(6rem + ${Math.max(members.length, 1) * 9}rem)`,
+          }}
+        >
+          <colgroup>
+            <col className="w-24" />
+            {members.map((member) => (
+              <col key={member.id} />
+            ))}
+          </colgroup>
           <thead>
             <tr className="border-b border-neutral-200">
               <th
                 scope="col"
-                className="sticky left-0 z-20 min-w-20 bg-white px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-neutral-500"
+                className="sticky left-0 z-20 bg-white px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-neutral-500"
               >
                 Date
               </th>
@@ -64,9 +83,10 @@ export function GroupMonthDashboard({
                 <th
                   key={member.id}
                   scope="col"
-                  className="min-w-28 border-l border-neutral-200 px-3 py-2 text-left text-xs font-medium text-neutral-700"
+                  title={member.displayName}
+                  className="border-l border-neutral-200 px-3 py-2 text-left text-xs font-medium text-neutral-700"
                 >
-                  {member.displayName}
+                  <span className="block truncate">{member.displayName}</span>
                 </th>
               ))}
             </tr>
@@ -94,16 +114,55 @@ export function GroupMonthDashboard({
                       {weekdayShort(date)}
                     </span>
                   </th>
-                  {members.map((member) => (
-                    <td
-                      key={member.id}
-                      className="border-l border-neutral-200 px-3 py-2"
-                    />
-                  ))}
+                  {members.map((member) => {
+                    const cell = member.cells[date];
+                    const overdue = cell?.overdue ?? false;
+                    return (
+                      <td
+                        key={member.id}
+                        className={`border-l border-neutral-200 px-3 py-2 ${
+                          overdue
+                            ? "bg-red-200 text-red-950"
+                            : ""
+                        }`}
+                      >
+                        {cell?.time ? (
+                          <div>
+                            <span className="tabular-nums">{cell.time}</span>
+                            {overdue && cell.penaltyLabel ? (
+                              <span className="mt-0.5 block text-xs tabular-nums text-red-800">
+                                {cell.penaltyLabel}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="text-neutral-400">—</span>
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               );
             })}
           </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-neutral-300 bg-red-50">
+              <th
+                scope="row"
+                className="sticky left-0 z-10 bg-red-50 px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-red-800"
+              >
+                Penalty
+              </th>
+              {members.map((member) => (
+                <td
+                  key={member.id}
+                  className="border-l border-neutral-200 px-3 py-2 font-medium tabular-nums text-red-900"
+                >
+                  {member.totalPenalty}
+                </td>
+              ))}
+            </tr>
+          </tfoot>
         </table>
       </div>
     </section>

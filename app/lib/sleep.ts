@@ -148,12 +148,216 @@ export function listTimeZones(): string[] {
   return [...COMMON_TIMEZONES, ...rest];
 }
 
+export function weekdayOfDate(dateOnly: string): Weekday {
+  const parsed = parseDateOnly(dateOnly);
+  return (parsed ? parsed.getUTCDay() : 0) as Weekday;
+}
+
+export function coveringEntry<T extends { effectiveFrom: string }>(
+  entries: T[],
+  onDate: string,
+): T | undefined {
+  let covering: T | undefined;
+  for (const entry of entries) {
+    if (entry.effectiveFrom > onDate) continue;
+    if (!covering || entry.effectiveFrom >= covering.effectiveFrom) {
+      covering = entry;
+    }
+  }
+  return covering;
+}
+
 export function coveringTimezone(
   schedules: { effectiveFrom: string; timezone: string }[],
   onDate: string,
 ): string {
-  const covering = schedules
-    .filter((schedule) => schedule.effectiveFrom <= onDate)
-    .at(-1);
+  const covering = coveringEntry(schedules, onDate);
   return covering?.timezone ?? schedules[0]?.timezone ?? DEFAULT_TIMEZONE;
+}
+
+export type NightBedtime = {
+  timezone: string;
+  halfHoursPast8pm: number;
+};
+
+export function bedtimeForNight(
+  schedules: {
+    effectiveFrom: string;
+    timezone: string;
+    times: SleepTimesByWeekday;
+  }[],
+  overrides: { date: string; timezone: string; halfHoursPast8pm: number }[],
+  onDate: string,
+): NightBedtime {
+  const override = overrides.find((entry) => entry.date === onDate);
+  if (override) {
+    return {
+      timezone: override.timezone,
+      halfHoursPast8pm: override.halfHoursPast8pm,
+    };
+  }
+
+  const schedule = coveringEntry(schedules, onDate);
+  if (schedule) {
+    return {
+      timezone: schedule.timezone,
+      halfHoursPast8pm: schedule.times[weekdayOfDate(onDate)],
+    };
+  }
+
+  return {
+    timezone: schedules[0]?.timezone ?? DEFAULT_TIMEZONE,
+    halfHoursPast8pm: DEFAULT_HALF_HOURS_PAST_8PM,
+  };
+}
+
+export function timezoneForNight(
+  schedules: { effectiveFrom: string; timezone: string }[],
+  overrides: { date: string; timezone: string }[],
+  onDate: string,
+): string {
+  const override = overrides.find((entry) => entry.date === onDate);
+  if (override) return override.timezone;
+  return coveringTimezone(schedules, onDate);
+}
+
+const HALF_HOUR_MS = 30 * 60 * 1000;
+
+export function ceilToHalfHour(date: Date): Date {
+  return new Date(Math.ceil(date.getTime() / HALF_HOUR_MS) * HALF_HOUR_MS);
+}
+
+export function formatTimeInZone(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).formatToParts(date);
+  const hour = parts.find((part) => part.type === "hour")?.value;
+  const minute = parts.find((part) => part.type === "minute")?.value;
+  const period = parts
+    .find((part) => part.type === "dayPeriod")
+    ?.value.toUpperCase();
+  return `${hour}:${minute} ${period}`;
+}
+
+export function formatRoundedLastActivity(
+  lastActivity: Date,
+  timeZone: string,
+): string {
+  return formatTimeInZone(ceilToHalfHour(lastActivity), timeZone);
+}
+
+function zoneWallParts(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const values: Record<string, string> = {};
+  for (const part of parts) {
+    if (part.type !== "literal") values[part.type] = part.value;
+  }
+
+  let year = Number(values.year);
+  let month = Number(values.month);
+  let day = Number(values.day);
+  let hour = Number(values.hour);
+  if (hour === 24) {
+    hour = 0;
+    const next = new Date(Date.UTC(year, month - 1, day + 1));
+    year = next.getUTCFullYear();
+    month = next.getUTCMonth() + 1;
+    day = next.getUTCDate();
+  }
+
+  return {
+    year,
+    month,
+    day,
+    hour,
+    minute: Number(values.minute),
+    second: Number(values.second),
+  };
+}
+
+function zonedWallTimeToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  timeZone: string,
+): Date {
+  let utc = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  for (let i = 0; i < 3; i++) {
+    const parts = zoneWallParts(new Date(utc), timeZone);
+    const seen = Date.UTC(
+      parts.year,
+      parts.month - 1,
+      parts.day,
+      parts.hour,
+      parts.minute,
+      parts.second,
+    );
+    const target = Date.UTC(year, month - 1, day, hour, minute, 0);
+    const diff = target - seen;
+    if (diff === 0) break;
+    utc += diff;
+  }
+  return new Date(utc);
+}
+
+export function bedtimeInstant(
+  nightDate: string,
+  halfHoursPast8pm: number,
+  timeZone: string,
+): Date {
+  const parsed = parseDateOnly(nightDate);
+  if (!parsed) {
+    throw new Error(`Invalid night date: ${nightDate}`);
+  }
+
+  const totalMinutes = 20 * 60 + halfHoursPast8pm * 30;
+  const dayOffset = Math.floor(totalMinutes / (24 * 60));
+  const minuteOfDay = totalMinutes % (24 * 60);
+  const rolled = new Date(
+    Date.UTC(
+      parsed.getUTCFullYear(),
+      parsed.getUTCMonth(),
+      parsed.getUTCDate() + dayOffset,
+    ),
+  );
+
+  return zonedWallTimeToUtc(
+    rolled.getUTCFullYear(),
+    rolled.getUTCMonth() + 1,
+    rolled.getUTCDate(),
+    Math.floor(minuteOfDay / 60),
+    minuteOfDay % 60,
+    timeZone,
+  );
+}
+
+export function nightOverdue(
+  lastActivity: Date,
+  bedtime: Date,
+): { overdue: boolean; halfHours: number } {
+  if (lastActivity.getTime() <= bedtime.getTime()) {
+    return { overdue: false, halfHours: 0 };
+  }
+
+  const rounded = ceilToHalfHour(lastActivity);
+  const halfHours = Math.max(
+    0,
+    Math.round((rounded.getTime() - bedtime.getTime()) / HALF_HOUR_MS),
+  );
+  return { overdue: true, halfHours };
 }

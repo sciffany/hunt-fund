@@ -62,3 +62,55 @@ export function formatPenaltyAmount(amount: { toString(): string } | string | nu
   }
   return text;
 }
+
+export type CoveringPenalty = {
+  effectiveFrom: string;
+  amount: string;
+  unit: PenaltyUnit;
+  unitLabel: string | null;
+};
+
+export function coveringPenalty<T extends { effectiveFrom: string }>(
+  penalties: T[],
+  onDate: string,
+): T | undefined {
+  let covering: T | undefined;
+  for (const penalty of penalties) {
+    if (penalty.effectiveFrom > onDate) continue;
+    if (!covering || penalty.effectiveFrom >= covering.effectiveFrom) {
+      covering = penalty;
+    }
+  }
+  return covering;
+}
+
+export function penaltyAmountToCents(amount: string | number): number {
+  const text = formatPenaltyAmount(amount);
+  const [whole, fraction = ""] = text.split(".");
+  return Number(whole) * 100 + Number(fraction.padEnd(2, "0").slice(0, 2));
+}
+
+export function nightlyPenaltyCents(
+  halfHours: number,
+  amount: string | number,
+): number {
+  if (halfHours <= 0) return 0;
+  return penaltyAmountToCents(amount) * halfHours;
+}
+
+function formatChargeNumber(cents: number, unit?: PenaltyUnit): string {
+  const text = (cents / 100).toFixed(2);
+  if (unit === "MONEY") return text;
+  return text.endsWith(".00") ? text.slice(0, -3) : text;
+}
+
+export function formatPenaltyCharge(
+  cents: number,
+  unit?: PenaltyUnit,
+  unitLabel?: string | null,
+): string {
+  const number = formatChargeNumber(cents, unit);
+  if (unit === "CHORE") return `${number} chores`;
+  if (unit === "OTHER" && unitLabel) return `${number} ${unitLabel}`;
+  return number;
+}

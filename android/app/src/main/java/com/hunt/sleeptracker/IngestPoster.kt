@@ -24,7 +24,8 @@ data class DaySteps(val day: LocalDate, val stepCount: Int)
  * configured local-time window (same 8pm–6am default as desktop).
  *
  * Steps: a single request upserts the last several calendar days into
- * `StepEvent` + `StepNight`.
+ * `StepEvent` + `StepNight`. The foreground service posts about every
+ * hour (and at local midnight); the activity can also send on demand.
  *
  * [userName] is resolved from [UserSettings] on each post so a settings
  * rename takes effect without restarting the foreground service. It must

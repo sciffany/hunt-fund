@@ -43,9 +43,10 @@ import kotlinx.coroutines.runBlocking
  * Steps prefer Google Health Connect ([HealthConnectStepsReader] aggregate of
  * [androidx.health.connect.client.records.StepsRecord]). When HC is
  * unavailable or permission is denied, [StepCounterTracker] reads the phone's
- * system [android.hardware.Sensor.TYPE_STEP_COUNTER]. [DailySteps] flushes
- * the last 7 Health Connect days (or the completed sensor day) to Neon
- * via the hunt-fund ingest API at local midnight.
+ * system [android.hardware.Sensor.TYPE_STEP_COUNTER]. [DailySteps] pushes
+ * the last 7 Health Connect days (or today's sensor total) to Neon via
+ * the hunt-fund ingest API about every hour, and again at local midnight
+ * when a completed day rolls over.
  */
 class ScreenStateService : Service() {
 
@@ -112,7 +113,8 @@ class ScreenStateService : Service() {
         poller = PhoneActivityPoller(this, poster, sessionId, scheduler).also { it.start() }
 
         // Prefer HC; fall back to pedometer. Periodic tick refreshes HC
-        // aggregates, catches midnight rollover, and retries permission.
+        // aggregates, catches midnight rollover, retries permission, and
+        // uploads to ingest when an hour has passed.
         scheduler.execute { syncSteps() }
         midnightTick = scheduler.scheduleWithFixedDelay(
             { syncSteps() },
@@ -139,12 +141,26 @@ class ScreenStateService : Service() {
                 dailySteps.source = StepSource.HEALTH_CONNECT
                 stepsTracking = true
             }
+            maybePushSteps()
             return
         }
         // Sensor path: roll day even if the sensor is quiet / not permitted.
         dailySteps.tick()
         // Sensor registration must happen on the main thread.
         mainHandler.post { startStepTrackingIfPermitted() }
+        maybePushSteps()
+    }
+
+    /**
+     * Upload current totals when [STEP_PUSH_INTERVAL_MS] has elapsed since
+     * the last ingest POST (including a midnight rollover flush). Persisted
+     * so a service restart does not immediately POST again.
+     */
+    private fun maybePushSteps() {
+        val now = System.currentTimeMillis()
+        val last = stepPushPrefs().getLong(KEY_LAST_STEP_PUSH_MS, 0L)
+        if (last > 0L && now - last < STEP_PUSH_INTERVAL_MS) return
+        pushRecentSteps(DaySteps(dailySteps.day, dailySteps.stepsToday))
     }
 
     /**
@@ -175,10 +191,20 @@ class ScreenStateService : Service() {
      * have (sensor midnight flush).
      */
     private fun pushRecentSteps(fallback: DaySteps) {
+        markStepPushNow()
         scheduler.execute {
             val days = runBlocking { loadStepsToPush(fallback) }
             poster.postDailySteps(days, sessionId)
         }
+    }
+
+    private fun stepPushPrefs() =
+        getSharedPreferences(STEP_PUSH_PREFS, MODE_PRIVATE)
+
+    private fun markStepPushNow() {
+        stepPushPrefs().edit()
+            .putLong(KEY_LAST_STEP_PUSH_MS, System.currentTimeMillis())
+            .apply()
     }
 
     private suspend fun loadStepsToPush(fallback: DaySteps): List<DaySteps> {
@@ -308,6 +334,10 @@ class ScreenStateService : Service() {
         private const val NOTIFICATION_ID = 1
         /** HC aggregate refresh + midnight / sensor retry interval. */
         private const val STEP_POLL_SECONDS = 60L
+        /** How often in-progress (and recent) day totals are POSTed to ingest. */
+        private const val STEP_PUSH_INTERVAL_MS = 60L * 60L * 1000L
+        private const val STEP_PUSH_PREFS = "step_ingest"
+        private const val KEY_LAST_STEP_PUSH_MS = "last_push_ms"
         const val ACTION_ENABLE_STEPS = "com.hunt.sleeptracker.ENABLE_STEPS"
 
         /** Live counter while the service is up; null when stopped. */

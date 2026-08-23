@@ -27,7 +27,7 @@ This is separate from [`../dashboard`](../dashboard): its own Neon database, no 
 
    - `DATABASE_URL` — Neon pooled URL
    - `DIRECT_URL` — Neon direct URL (used by `prisma migrate`)
-   - `INGEST_TOKEN` — shared secret the Android tracker sends as `Authorization: Bearer`
+   - `INGEST_TOKEN` — shared secret the Android and desktop trackers send as `Authorization: Bearer`
    - `AUTH_SECRET` — `openssl rand -base64 32`
    - `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET`
    - `AUTH_URL` — `http://localhost:3000`

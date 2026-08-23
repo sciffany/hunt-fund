@@ -1,8 +1,8 @@
 # sleep_tracker
 
 Tiny background agent that logs the latest mouse/keyboard activity between
-8pm and 6am to a shared Supabase table, so two people can keep each other
-accountable for going to bed.
+8pm and 6am to the hunt-fund app (Neon via `/api/ingest/sleep`), so two
+people can keep each other accountable for going to bed.
 
 The tracker never records *what* keys are pressed — only *that* something
 happened, plus the timestamp.
@@ -16,32 +16,27 @@ happened, plus the timestamp.
 | `app_close` | when the tracker exits cleanly (always) — SIGTERM, SIGINT, or SIGHUP   |
 
 Each event also carries a `session_id` (UUID per run) and a `user_name`
-so both people writing into the same table are distinguishable.
+that must match a hunt-fund account username.
 
 ## Setup
 
-### 1. Supabase
+### 1. hunt-fund
 
-Create a Supabase project (or use an existing one). In the SQL editor,
-run [`schema.sql`](./schema.sql). It creates a `sleep_events` table
-(raw event stream) and a `sleep_nights` table (per-night summary that
-the dashboard reads from and its refresh button writes to), plus
-`step_events` / `step_nights` for Android daily steps (Health Connect,
-with hardware pedometer fallback), with
-indexes and RLS policies that let the anon key insert/read/update. The
-file is safe to re-run and will migrate installs where `sleep_nights`
-was previously exposed as a view.
+The desktop tracker POSTs to the Next.js ingest API, which writes
+`SleepEvent` rows in Neon. You need:
 
-Grab the project URL and anon key from Project Settings → API.
+- A deployed (or local) hunt-fund app — see [`app/README.md`](./app/README.md)
+- The shared `INGEST_TOKEN` from that app's env
+- A hunt-fund username that already exists (sign in once and pick it)
 
 ### 2. Configure
 
 ```bash
 cp .env.example .env
-# then edit .env with your SUPABASE_URL, SUPABASE_KEY, and USER_NAME
+# then edit .env with your APP_URL, INGEST_TOKEN, and USER_NAME
 ```
 
-`USER_NAME` should be different on each machine (e.g. `"alex"` and `"sam"`).
+`USER_NAME` must match the hunt-fund account username (e.g. `"tiffany"`).
 
 ### 3. Install as a background service (macOS)
 
@@ -70,17 +65,18 @@ tail -F ~/Library/Logs/sleep_tracker.out.log ~/Library/Logs/sleep_tracker.err.lo
 
 `out.log` gets the app's own log lines; `err.log` gets Python tracebacks
 if anything crashes. You should see an `app_start` line, then `activity`
-lines every 30s while you move the mouse (after 8pm). In Supabase,
-`select * from sleep_events order by event_time desc limit 20;` should
-show the rows.
+lines every 30s while you move the mouse (after 8pm). In Neon / Prisma
+Studio, new `SleepEvent` rows (`APP_START`, then `ACTIVITY`) should
+appear for that user.
 
 ### Troubleshooting
 
-- `HTTP/2 401 Unauthorized` / `Invalid API key` — the `SUPABASE_KEY` in
-  `.env` is wrong or truncated. Copy the full `anon` `public` key from
-  Supabase → Project Settings → API.
-- `relation "sleep_events" does not exist` — you haven't run
-  `schema.sql` yet. Paste it into the Supabase SQL editor.
+- `HTTP 401` / `Invalid ingest token` — the `INGEST_TOKEN` in `.env`
+  does not match the Next.js app's `INGEST_TOKEN`.
+- `HTTP 404` / `Unknown username` — `USER_NAME` does not match a
+  hunt-fund account. Sign in once and set the same username.
+- `HTTP 503` / `Ingest is not configured` — the Next.js app is missing
+  `INGEST_TOKEN`.
 - `This process is not trusted! Input event monitoring will not be
   possible...` — you need to grant Accessibility to
   `<repo>/.venv/bin/python` (see step 3 above) and then
@@ -111,9 +107,9 @@ shutdowns get logged.
 
 ## Windows
 
-The Python script itself is cross-platform — `pynput` and `supabase-py`
-both support Windows. `install-windows.ps1` is the equivalent of
-`install-macos.sh`: it creates the venv, installs `requirements.txt`,
+The Python script itself is cross-platform — `pynput` and the stdlib
+HTTP client both support Windows. `install-windows.ps1` is the equivalent
+of `install-macos.sh`: it creates the venv, installs `requirements.txt`,
 writes a VBS wrapper, and registers a per-user scheduled task that
 launches `pythonw.exe sleep_tracker.py` at every logon.
 
@@ -123,7 +119,7 @@ launches `pythonw.exe sleep_tracker.py` at every logon.
   (make sure "Add python.exe to PATH" is checked, or that the `py`
   launcher is available).
 - A `.env` file in the repo root (`Copy-Item .env.example .env`, then
-  edit `SUPABASE_URL`, `SUPABASE_KEY`, and `USER_NAME`).
+  edit `APP_URL`, `INGEST_TOKEN`, and `USER_NAME`).
 
 ### 2. Install
 
@@ -156,9 +152,9 @@ Get-Content -Wait "$env:LOCALAPPDATA\SleepTracker\sleep_tracker.log"
 ```
 
 You should see an `app_start` line, then `activity` lines every 30s
-while you move the mouse (after 8pm). In Supabase,
-`select * from sleep_events order by event_time desc limit 20;` should
-show the rows.
+while you move the mouse (after 8pm). In Neon / Prisma Studio, new
+`SleepEvent` rows (`APP_START`, then `ACTIVITY`) should appear for
+that user.
 
 ### 4. Managing the agent (Windows)
 
@@ -280,10 +276,9 @@ python sleep_tracker.py
 
 | var                    | default        | notes                                       |
 |------------------------|----------------|---------------------------------------------|
-| `SUPABASE_URL`         | required       | project URL                                 |
-| `SUPABASE_KEY`         | required       | anon or service_role key                    |
-| `USER_NAME`            | hostname       | how this machine appears in the DB          |
-| `SLEEP_TRACKER_TABLE`  | `sleep_events` | table name                                  |
+| `APP_URL`              | required       | hunt-fund origin, no trailing slash          |
+| `INGEST_TOKEN`         | required       | same shared secret as the Next.js app       |
+| `USER_NAME`            | hostname       | must match the hunt-fund account username    |
 | `WINDOW_START_HOUR`    | `20`           | local-hour when activity logging turns on   |
 | `WINDOW_END_HOUR`      | `6`            | local-hour when activity logging turns off  |
 | `FLUSH_INTERVAL_SECONDS` | `30`         | max frequency of `activity` rows            |
@@ -291,37 +286,21 @@ python sleep_tracker.py
 
 ## Querying who was up last night
 
-```sql
-select user_name, night, last_activity
-from sleep_nights
-where night = current_date - 1
-order by last_activity desc;
-```
-
-`sleep_nights` is populated by the dashboard's per-row refresh button, so
-a `night` only appears after someone has clicked ↻ for it (or you've
-inserted a row manually). To recompute from raw events directly in SQL:
+Raw events land in Neon's `SleepEvent` table. The hunt-fund app reads
+them; to inspect from SQL:
 
 ```sql
-insert into sleep_nights (user_name, night, last_activity, updated_at)
-select
-    user_name,
-    (date_trunc('day', event_time - interval '12 hours'))::date as night,
-    max(event_time) filter (where event_type in ('activity', 'phone_activity')) as last_activity,
-    now()
-from sleep_events
-where event_time >= (current_date - 1)::timestamptz + interval '12 hours'
-  and event_time <  (current_date    )::timestamptz + interval '12 hours'
-group by 1, 2
-on conflict (user_name, night)
-do update set
-    last_activity = excluded.last_activity,
-    updated_at    = excluded.updated_at;
+select u.username, e."eventType", e."eventTime"
+from "SleepEvent" e
+join "User" u on u.id = e."userId"
+order by e."eventTime" desc
+limit 20;
 ```
 
 ## Privacy notes
 
 - Nothing about the *content* of input is captured, only the timestamps.
 - The event stream reveals when you're at the keyboard, so treat the
-  Supabase table like personal data (RLS + short retention are a good
-  idea for anything shared beyond two trusted people).
+  Neon tables like personal data (short retention is a good idea for
+  anything shared beyond two trusted people).
+

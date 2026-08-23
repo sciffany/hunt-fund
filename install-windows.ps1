@@ -105,7 +105,7 @@ Register-ScheduledTask `
     -Trigger     $trigger `
     -Settings    $settings `
     -Principal   $principal `
-    -Description "Logs mouse/keyboard activity to Supabase (sleep_tracker)." | Out-Null
+    -Description "Logs mouse/keyboard activity to hunt-fund (sleep_tracker)." | Out-Null
 
 # Kick it off now so we don't wait until the next logon.
 Start-ScheduledTask -TaskName $TaskName

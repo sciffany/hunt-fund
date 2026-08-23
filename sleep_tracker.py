@@ -2,7 +2,8 @@
 """Sleep accountability tracker.
 
 Logs the latest mouse/keyboard activity between 8pm and 6am (local time)
-to a Supabase table so a partner/roommate can hold you accountable.
+to the hunt-fund ingest API (Neon via Prisma) so a partner/roommate can
+hold you accountable.
 
 Events logged:
     app_start  - when the tracker process starts (always, regardless of window)
@@ -17,18 +18,20 @@ The tracker only reads whether input happened, never what keys were pressed.
 from __future__ import annotations
 
 import atexit
+import json
 import logging
 import os
 import signal
 import socket
 import sys
 import threading
+import urllib.error
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from pynput import keyboard, mouse
-from supabase import Client, create_client
 
 load_dotenv()
 
@@ -49,10 +52,9 @@ def _require_env(name: str) -> str:
     return value
 
 
-SUPABASE_URL = _require_env("SUPABASE_URL")
-SUPABASE_KEY = _require_env("SUPABASE_KEY")
+APP_URL = _require_env("APP_URL").rstrip("/")
+INGEST_TOKEN = _require_env("INGEST_TOKEN")
 USER_NAME = os.environ.get("USER_NAME") or socket.gethostname()
-TABLE_NAME = os.environ.get("SLEEP_TRACKER_TABLE", "sleep_events")
 
 # Local-time window during which activity events are recorded.
 # Window wraps midnight when START > END.
@@ -94,8 +96,7 @@ def in_window(now_local: datetime) -> bool:
 
 
 class ActivityTracker:
-    def __init__(self, supabase: Client, session_id: str) -> None:
-        self.supabase = supabase
+    def __init__(self, session_id: str) -> None:
         self.session_id = session_id
         self._lock = threading.Lock()
         self._last_activity: datetime | None = None
@@ -104,7 +105,7 @@ class ActivityTracker:
 
     def on_activity(self, *_args, **_kwargs) -> None:
         # Called from pynput listener threads on every mouse/key event.
-        # Keep this hot path trivial; the flush loop does the DB work.
+        # Keep this hot path trivial; the flush loop does the network work.
         ts = datetime.now(timezone.utc)
         with self._lock:
             self._last_activity = ts
@@ -112,14 +113,28 @@ class ActivityTracker:
     def log_event(self, event_type: str, event_time: datetime | None = None) -> None:
         event_time = event_time or datetime.now(timezone.utc)
         payload = {
-            "user_name": USER_NAME,
-            "event_type": event_type,
-            "event_time": event_time.isoformat(),
-            "session_id": self.session_id,
+            "username": USER_NAME,
+            "eventType": event_type,
+            "eventTime": event_time.isoformat(),
+            "sessionId": self.session_id,
         }
+        request = urllib.request.Request(
+            f"{APP_URL}/api/ingest/sleep",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {INGEST_TOKEN}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
         try:
-            self.supabase.table(TABLE_NAME).insert(payload).execute()
+            with urllib.request.urlopen(request, timeout=15) as response:
+                response.read()
             log.info("logged %s at %s", event_type, event_time.isoformat())
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")[:200]
+            log.error("failed to log %s: HTTP %s %s", event_type, exc.code, body)
         except Exception as exc:  # network / auth / schema errors
             log.error("failed to log %s: %s", event_type, exc)
 
@@ -137,9 +152,8 @@ class ActivityTracker:
 
 
 def main() -> None:
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     session_id = str(uuid.uuid4())
-    tracker = ActivityTracker(supabase, session_id)
+    tracker = ActivityTracker(session_id)
 
     log.info(
         "sleep_tracker starting user=%s session=%s window=%02d:00-%02d:00 flush=%ds",

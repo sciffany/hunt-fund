@@ -27,6 +27,7 @@ This is separate from [`../dashboard`](../dashboard): its own Neon database, no 
 
    - `DATABASE_URL` — Neon pooled URL
    - `DIRECT_URL` — Neon direct URL (used by `prisma migrate`)
+   - `INGEST_TOKEN` — shared secret the Android tracker sends as `Authorization: Bearer`
    - `AUTH_SECRET` — `openssl rand -base64 32`
    - `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET`
    - `AUTH_URL` — `http://localhost:3000`
@@ -40,6 +41,11 @@ This is separate from [`../dashboard`](../dashboard): its own Neon database, no 
    ```
 
    Open [http://localhost:3000](http://localhost:3000).
+
+   Phone and desktop trackers POST to `/api/ingest/sleep` and
+   `/api/ingest/steps` with `Authorization: Bearer $INGEST_TOKEN`. The
+   username in the body must match a hunt-fund account. Sleep event types
+   are stored as Prisma enums (`PHONE_ACTIVITY`, `ACTIVITY`, …).
 
    In `next dev` only, the sign-in page also offers **Dev Owner** and **Dev
    Member**. Those create two local users and a sample group (`Dev Sleep Club`)
@@ -63,4 +69,6 @@ This is separate from [`../dashboard`](../dashboard): its own Neon database, no 
 3. Add the same environment variables (Production + Preview).
 4. Set `AUTH_URL` to the Vercel URL and add that origin’s Google callback:
 
-   `https://<your-domain>/api/auth/callback/google`
+   Production: `https://groupfundz.vercel.app`
+
+   `https://groupfundz.vercel.app/api/auth/callback/google`

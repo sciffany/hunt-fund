@@ -9,7 +9,7 @@ const publicPaths = new Set(["/", "/login"]);
 export default auth((req) => {
   const { pathname } = req.nextUrl;
 
-  if (pathname.startsWith("/api/auth")) {
+  if (pathname.startsWith("/api/auth") || pathname.startsWith("/api/ingest")) {
     return NextResponse.next();
   }
 

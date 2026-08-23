@@ -17,6 +17,10 @@ export const MIN_HALF_HOURS_PAST_8PM = 0;
 export const MAX_HALF_HOURS_PAST_8PM = 20;
 export const DEFAULT_TIMEZONE = "Asia/Singapore";
 export const DEFAULT_HALF_HOURS_PAST_8PM = 7; // 11:30 PM
+/** How far back a night can be recomputed from raw events. */
+export const REFRESH_WINDOW_DAYS = 7;
+/** Raw sleep events older than this can be pruned; cached nights are kept. */
+export const EVENT_RETENTION_DAYS = 14;
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -125,6 +129,22 @@ export function todayInTimeZone(timeZone: string = DEFAULT_TIMEZONE): string {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
+}
+
+export function shiftDateOnly(dateOnly: string, days: number): string | null {
+  const date = parseDateOnly(dateOnly);
+  if (!date) return null;
+  date.setUTCDate(date.getUTCDate() + days);
+  return formatDateOnly(date);
+}
+
+/** True iff `night` is within the last `REFRESH_WINDOW_DAYS` of `today`. */
+export function isNightRefreshable(
+  night: string,
+  today: string = todayInTimeZone(),
+): boolean {
+  const cutoff = shiftDateOnly(today, -REFRESH_WINDOW_DAYS);
+  return cutoff !== null && DATE_ONLY.test(night) && night >= cutoff;
 }
 
 export function isValidTimeZone(timeZone: string): boolean {
@@ -360,4 +380,53 @@ export function nightOverdue(
     Math.round((rounded.getTime() - bedtime.getTime()) / HALF_HOUR_MS),
   );
   return { overdue: true, halfHours };
+}
+
+/** Local 8:00 PM on the night-anchor date through 6:00 AM the next morning. */
+export function nightActivityWindow(
+  nightDate: string,
+  timeZone: string,
+): { start: Date; end: Date } {
+  return {
+    start: bedtimeInstant(nightDate, MIN_HALF_HOURS_PAST_8PM, timeZone),
+    end: bedtimeInstant(nightDate, MAX_HALF_HOURS_PAST_8PM, timeZone),
+  };
+}
+
+export const LAST_ACTIVITY_EVENT_TYPES = [
+  "ACTIVITY",
+  "PHONE_ACTIVITY",
+  "APP_CLOSE",
+] as const;
+
+export type LastActivityEventType = (typeof LAST_ACTIVITY_EVENT_TYPES)[number];
+
+function isLastActivityEventType(value: string): value is LastActivityEventType {
+  return (LAST_ACTIVITY_EVENT_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * Latest gadget activity in [start, end). An `APP_CLOSE` as the last event
+ * means we can't tell when they actually stopped, so treat that as still up
+ * at the end of the window (6:00 AM).
+ */
+export function lastActivityInWindow(
+  events: { eventType: string; eventTime: Date }[],
+  start: Date,
+  end: Date,
+): Date | null {
+  let latest: { eventType: string; eventTime: Date } | null = null;
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+
+  for (const event of events) {
+    if (!isLastActivityEventType(event.eventType)) continue;
+    const time = event.eventTime.getTime();
+    if (time < startMs || time >= endMs) continue;
+    if (!latest || time > latest.eventTime.getTime()) latest = event;
+  }
+
+  if (!latest) return null;
+  if (latest.eventType === "APP_CLOSE") return end;
+  return latest.eventTime;
 }

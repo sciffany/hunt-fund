@@ -2,10 +2,15 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
+import { DashboardMonthNav } from "@/components/dashboard";
 import {
   GroupMonthDashboard,
   type DashboardCell,
 } from "@/components/GroupMonthDashboard";
+import {
+  GroupMonthStepsDashboard,
+  type StepsDashboardCell,
+} from "@/components/GroupMonthStepsDashboard";
 import { leaveGroup } from "@/lib/actions/groups";
 import {
   currentYearMonth,
@@ -17,7 +22,9 @@ import {
   formatPenaltyAmount,
   formatPenaltyCharge,
   nightlyPenaltyCents,
+  stepPenaltyCents,
 } from "@/lib/penalty";
+import { stepShortfallUnits } from "@/lib/steps";
 import { prisma } from "@/lib/prisma";
 import { displayNameOf, requireOnboardedUser } from "@/lib/session";
 import {
@@ -77,6 +84,10 @@ export default async function GroupPage({
                 where: { night: { gte: monthStart, lte: monthEnd } },
                 select: { night: true, lastActivity: true },
               },
+              stepNights: {
+                where: { night: { gte: monthStart, lte: monthEnd } },
+                select: { night: true, steps: true },
+              },
             },
           },
           sleepSchedules: {
@@ -95,6 +106,19 @@ export default async function GroupPage({
             },
             orderBy: { effectiveFrom: "asc" },
           },
+          stepTargets: {
+            select: { effectiveFrom: true, targetSteps: true },
+            orderBy: { effectiveFrom: "asc" },
+          },
+          stepPenalties: {
+            select: {
+              effectiveFrom: true,
+              amount: true,
+              unit: true,
+              unitLabel: true,
+            },
+            orderBy: { effectiveFrom: "asc" },
+          },
         },
         orderBy: { joinedAt: "asc" },
       },
@@ -103,27 +127,32 @@ export default async function GroupPage({
 
   if (!group) notFound();
 
+  const sleepTrackingEnabled = group.trackingKinds.includes(
+    "SLEEP_TIME_GADGET_USAGE",
+  );
+  const stepTrackingEnabled = group.trackingKinds.includes("DAILY_STEPS");
+  const memberCountLabel = `${group.members.length} ${
+    group.members.length === 1 ? "member" : "members"
+  }`;
+
   return (
     <AppShell wide>
       <p className="text-sm text-neutral-500">
         <Link href="/home" className="hover:text-neutral-900">
           Home
         </Link>
-        <span className="mx-1">/</span>
-        {group.name}
+        <span className="mx-1.5 text-neutral-300">/</span>
+        <span className="text-neutral-700">{group.name}</span>
       </p>
-      <div className="mt-3 flex flex-wrap items-start justify-between gap-4">
+      <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{group.name}</h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            {group.members.length}{" "}
-            {group.members.length === 1 ? "member" : "members"}
-          </p>
+          <p className="mt-1 text-sm text-neutral-500">{memberCountLabel}</p>
         </div>
         {isOwner ? (
           <Link
             href={`/groups/${group.id}/settings`}
-            className="text-sm text-neutral-500 hover:text-neutral-900"
+            className="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-700 shadow-sm hover:bg-neutral-50"
           >
             Settings
           </Link>
@@ -132,7 +161,7 @@ export default async function GroupPage({
             <input type="hidden" name="groupId" value={group.id} />
             <button
               type="submit"
-              className="rounded-md border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-100"
+              className="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm font-medium text-neutral-700 shadow-sm hover:bg-neutral-50"
             >
               Leave group
             </button>
@@ -140,11 +169,23 @@ export default async function GroupPage({
         )}
       </div>
 
-      <GroupMonthDashboard
-        groupId={group.id}
-        month={month}
-        today={todayInTimeZone(DEFAULT_TIMEZONE)}
-        members={group.members.map((member) => {
+      {sleepTrackingEnabled || stepTrackingEnabled ? (
+        <DashboardMonthNav groupId={group.id} month={month} />
+      ) : (
+        <p className="mt-8 rounded-xl border border-dashed border-neutral-200 bg-white px-4 py-8 text-center text-sm text-neutral-500">
+          No tracking is enabled yet.
+          {isOwner
+            ? " Turn on sleep or step tracking in Settings."
+            : " Ask the group owner to turn on sleep or step tracking."}
+        </p>
+      )}
+
+      {sleepTrackingEnabled ? (
+        <GroupMonthDashboard
+          groupId={group.id}
+          month={month}
+          today={todayInTimeZone(DEFAULT_TIMEZONE)}
+          members={group.members.map((member) => {
           const schedules = member.sleepSchedules.map((schedule) => ({
             effectiveFrom: formatDateOnly(schedule.effectiveFrom),
             timezone: schedule.timezone,
@@ -217,7 +258,71 @@ export default async function GroupPage({
             ),
           };
         })}
-      />
+        />
+      ) : null}
+
+      {stepTrackingEnabled ? (
+        <GroupMonthStepsDashboard
+          month={month}
+          today={todayInTimeZone(DEFAULT_TIMEZONE)}
+          members={group.members.map((member) => {
+            const targets = member.stepTargets.map((target) => ({
+              effectiveFrom: formatDateOnly(target.effectiveFrom),
+              targetSteps: target.targetSteps,
+            }));
+            const penalties = member.stepPenalties.map((penalty) => ({
+              effectiveFrom: formatDateOnly(penalty.effectiveFrom),
+              amount: formatPenaltyAmount(penalty.amount),
+              unit: penalty.unit,
+              unitLabel: penalty.unitLabel,
+            }));
+            const nights = new Map(
+              member.user.stepNights.map((night) => [
+                formatDateOnly(night.night),
+                night.steps,
+              ]),
+            );
+            const cells: Record<string, StepsDashboardCell> = {};
+            let totalCents = 0;
+            for (const date of dates) {
+              const steps = nights.get(date);
+              const target = coveringPenalty(targets, date);
+              const penalty = coveringPenalty(penalties, date);
+              if (steps === undefined || !target) {
+                cells[date] = { steps: steps ?? null, below: false, penaltyLabel: null };
+                continue;
+              }
+
+              const units = stepShortfallUnits(steps, target.targetSteps);
+              const below = units > 0;
+              const cents = penalty ? stepPenaltyCents(units, penalty.amount) : 0;
+              totalCents += cents;
+              cells[date] = {
+                steps,
+                below,
+                penaltyLabel: below
+                  ? formatPenaltyCharge(cents, penalty?.unit, penalty?.unitLabel)
+                  : null,
+              };
+            }
+
+            const latestPenalty = coveringPenalty(
+              penalties,
+              dates[dates.length - 1],
+            );
+            return {
+              id: member.id,
+              displayName: displayNameOf(member.user),
+              cells,
+              totalPenalty: formatPenaltyCharge(
+                totalCents,
+                latestPenalty?.unit,
+                latestPenalty?.unitLabel,
+              ),
+            };
+          })}
+        />
+      ) : null}
     </AppShell>
   );
 }

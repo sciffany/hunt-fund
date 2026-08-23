@@ -98,6 +98,14 @@ export function nightlyPenaltyCents(
   return penaltyAmountToCents(amount) * halfHours;
 }
 
+export function stepPenaltyCents(
+  units: number,
+  amount: string | number,
+): number {
+  if (units <= 0) return 0;
+  return penaltyAmountToCents(amount) * units;
+}
+
 function formatChargeNumber(cents: number, unit?: PenaltyUnit): string {
   const text = (cents / 100).toFixed(2);
   if (unit === "MONEY") return text;

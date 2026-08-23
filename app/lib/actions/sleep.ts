@@ -11,12 +11,22 @@ import {
   parsePenaltyUnitLabel,
 } from "@/lib/penalty";
 import {
+  DEFAULT_TIMEZONE,
+  EVENT_RETENTION_DAYS,
+  LAST_ACTIVITY_EVENT_TYPES,
+  REFRESH_WINDOW_DAYS,
+  formatDateOnly,
+  isNightRefreshable,
+  isValidTimeZone,
+  lastActivityInWindow,
+  nightActivityWindow,
   parseDateOnly,
   parseHalfHoursPast8pm,
   parseSleepTimes,
   sleepTimesToJson,
+  timezoneForNight,
+  todayInTimeZone,
   WEEKDAYS,
-  isValidTimeZone,
   type SleepTimesByWeekday,
 } from "@/lib/sleep";
 
@@ -47,20 +57,30 @@ export async function updateGroupTracking(
   const group = await requireOwnedGroup(user.id, groupId);
   if (!group) return { error: "You can’t edit this group." };
 
-  const enabled = formData.get("sleepTracking") === "on";
+  const sleepEnabled = formData.get("sleepTracking") === "on";
+  const stepEnabled = formData.get("stepTracking") === "on";
+  const trackingKinds = [
+    ...(sleepEnabled ? (["SLEEP_TIME_GADGET_USAGE"] as const) : []),
+    ...(stepEnabled ? (["DAILY_STEPS"] as const) : []),
+  ];
   await prisma.group.update({
     where: { id: groupId },
-    data: {
-      trackingKinds: enabled ? ["SLEEP_TIME_GADGET_USAGE"] : [],
-    },
+    data: { trackingKinds: [...trackingKinds] },
   });
 
   revalidateGroup(groupId);
   return {
-    success: enabled
-      ? "Sleep tracking is on. Customize bedtimes below."
-      : "Sleep tracking is off.",
+    success: trackingMessage(sleepEnabled, stepEnabled),
   };
+}
+
+function trackingMessage(sleepEnabled: boolean, stepEnabled: boolean) {
+  if (sleepEnabled && stepEnabled) {
+    return "Sleep and daily step tracking are on.";
+  }
+  if (sleepEnabled) return "Sleep tracking is on. Customize bedtimes below.";
+  if (stepEnabled) return "Daily step tracking is on. Set targets below.";
+  return "Tracking is off.";
 }
 
 function timesFromForm(formData: FormData): SleepTimesByWeekday | null {
@@ -315,4 +335,150 @@ export async function deleteSleepPenalty(formData: FormData) {
 
   await prisma.sleepPenalty.delete({ where: { id: penaltyId } });
   revalidateGroup(groupId);
+}
+
+export type RefreshSleepNightResult =
+  | { ok: true; night: string; updated: number }
+  | { ok: false; error: string };
+
+export async function refreshSleepNight(
+  groupId: string,
+  nightRaw: string,
+): Promise<RefreshSleepNightResult> {
+  const user = await requireOnboardedUser();
+  const night = parseDateOnly(nightRaw);
+  if (!groupId || !night) {
+    return { ok: false, error: "Pick a valid night to refresh." };
+  }
+
+  const nightKey = formatDateOnly(night);
+  if (!isNightRefreshable(nightKey, todayInTimeZone(DEFAULT_TIMEZONE))) {
+    return {
+      ok: false,
+      error: `Nights older than ${REFRESH_WINDOW_DAYS} days can’t be refreshed.`,
+    };
+  }
+
+  const membership = await prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId, userId: user.id } },
+  });
+  if (!membership) {
+    return { ok: false, error: "You aren’t in this group." };
+  }
+
+  const members = await prisma.groupMember.findMany({
+    where: { groupId },
+    include: {
+      sleepSchedules: {
+        select: { effectiveFrom: true, timezone: true },
+        orderBy: { effectiveFrom: "asc" },
+      },
+      sleepOverrides: {
+        where: { date: night },
+        select: { date: true, timezone: true },
+      },
+    },
+  });
+
+  const windows = members.map((member) => {
+    const schedules = member.sleepSchedules.map((schedule) => ({
+      effectiveFrom: formatDateOnly(schedule.effectiveFrom),
+      timezone: schedule.timezone,
+    }));
+    const overrides = member.sleepOverrides.map((override) => ({
+      date: formatDateOnly(override.date),
+      timezone: override.timezone,
+    }));
+    const rawTimezone = timezoneForNight(schedules, overrides, nightKey);
+    const timezone = isValidTimeZone(rawTimezone)
+      ? rawTimezone
+      : DEFAULT_TIMEZONE;
+    const { start, end } = nightActivityWindow(nightKey, timezone);
+    return { userId: member.userId, start, end };
+  });
+
+  if (windows.length === 0) {
+    return { ok: true, night: nightKey, updated: 0 };
+  }
+
+  const minStart = new Date(Math.min(...windows.map((window) => window.start.getTime())));
+  const maxEnd = new Date(Math.max(...windows.map((window) => window.end.getTime())));
+
+  const events = await prisma.sleepEvent.findMany({
+    where: {
+      userId: { in: windows.map((window) => window.userId) },
+      eventType: { in: [...LAST_ACTIVITY_EVENT_TYPES] },
+      eventTime: { gte: minStart, lt: maxEnd },
+    },
+    select: { userId: true, eventType: true, eventTime: true },
+    orderBy: { eventTime: "desc" },
+  });
+
+  const eventsByUser = new Map<string, typeof events>();
+  for (const event of events) {
+    const list = eventsByUser.get(event.userId);
+    if (list) list.push(event);
+    else eventsByUser.set(event.userId, [event]);
+  }
+
+  const rows = windows.map((window) => ({
+    userId: window.userId,
+    lastActivity: lastActivityInWindow(
+      eventsByUser.get(window.userId) ?? [],
+      window.start,
+      window.end,
+    ),
+  }));
+
+  await prisma.$transaction(
+    rows.map((row) =>
+      prisma.sleepNight.upsert({
+        where: { userId_night: { userId: row.userId, night } },
+        create: {
+          userId: row.userId,
+          night,
+          lastActivity: row.lastActivity,
+        },
+        update: { lastActivity: row.lastActivity },
+      }),
+    ),
+  );
+
+  revalidateGroup(groupId);
+  return { ok: true, night: nightKey, updated: rows.length };
+}
+
+export type PruneSleepEventsResult =
+  | { ok: true; deleted: number }
+  | { ok: false; error: string };
+
+export async function pruneOldSleepEvents(
+  groupId: string,
+): Promise<PruneSleepEventsResult> {
+  const user = await requireOnboardedUser();
+  if (!groupId) return { ok: false, error: "Pick a group." };
+
+  const membership = await prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId, userId: user.id } },
+  });
+  if (!membership) {
+    return { ok: false, error: "You aren’t in this group." };
+  }
+
+  const members = await prisma.groupMember.findMany({
+    where: { groupId },
+    select: { userId: true },
+  });
+  const cutoff = new Date(
+    Date.now() - EVENT_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+  );
+  const result = await prisma.sleepEvent.deleteMany({
+    where: {
+      userId: { in: members.map((member) => member.userId) },
+      eventTime: { lt: cutoff },
+    },
+  });
+
+  revalidateGroup(groupId);
+  return { ok: true, deleted: result.count };
 }

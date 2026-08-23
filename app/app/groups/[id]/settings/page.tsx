@@ -52,6 +52,8 @@ export default async function GroupSettingsPage({
           sleepSchedules: { orderBy: { effectiveFrom: "asc" } },
           sleepOverrides: { orderBy: { date: "asc" } },
           sleepPenalties: { orderBy: { effectiveFrom: "asc" } },
+          stepTargets: { orderBy: { effectiveFrom: "asc" } },
+          stepPenalties: { orderBy: { effectiveFrom: "asc" } },
         },
         orderBy: { joinedAt: "asc" },
       },
@@ -73,6 +75,7 @@ export default async function GroupSettingsPage({
   const sleepTrackingEnabled = group.trackingKinds.includes(
     "SLEEP_TIME_GADGET_USAGE",
   );
+  const stepTrackingEnabled = group.trackingKinds.includes("DAILY_STEPS");
 
   return (
     <AppShell>
@@ -130,6 +133,7 @@ export default async function GroupSettingsPage({
       <SleepTrackingSettings
         groupId={group.id}
         sleepTrackingEnabled={sleepTrackingEnabled}
+        stepTrackingEnabled={stepTrackingEnabled}
         timeZones={listTimeZones()}
         defaultDate={todayInTimeZone(DEFAULT_TIMEZONE)}
         members={group.members.map((member) => ({
@@ -151,6 +155,24 @@ export default async function GroupSettingsPage({
             note: override.note,
           })),
           penalties: member.sleepPenalties.map((penalty) => ({
+            id: penalty.id,
+            effectiveFrom: formatDateOnly(penalty.effectiveFrom),
+            amount: formatPenaltyAmount(penalty.amount),
+            unit: penalty.unit,
+            unitLabel: penalty.unitLabel,
+          })),
+        }))}
+        stepMembers={group.members.map((member) => ({
+          id: member.id,
+          displayName: displayNameOf(member.user),
+          username: member.user.username,
+          role: member.role,
+          targets: member.stepTargets.map((target) => ({
+            id: target.id,
+            effectiveFrom: formatDateOnly(target.effectiveFrom),
+            targetSteps: target.targetSteps,
+          })),
+          penalties: member.stepPenalties.map((penalty) => ({
             id: penalty.id,
             effectiveFrom: formatDateOnly(penalty.effectiveFrom),
             amount: formatPenaltyAmount(penalty.amount),

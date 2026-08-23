@@ -21,6 +21,7 @@ enum InviteStatus {
 
 enum TrackingKind {
   SLEEP_TIME_GADGET_USAGE
+  DAILY_STEPS
 }
 
 enum PenaltyUnit {
@@ -124,6 +125,8 @@ model GroupMember {
   sleepSchedules SleepSchedule[]
   sleepOverrides SleepOverride[]
   sleepPenalties SleepPenalty[]
+  stepTargets    StepTarget[]
+  stepPenalties  StepPenalty[]
 
   @@unique([groupId, userId])
 }
@@ -215,6 +218,36 @@ model StepEvent {
   createdAt DateTime @default(now())
 
   @@index([userId, day(sort: Desc)])
+}
+
+model StepTarget {
+  id            String      @id @default(cuid())
+  groupMemberId String
+  groupMember   GroupMember @relation(fields: [groupMemberId], references: [id], onDelete: Cascade)
+  /// Calendar date this daily step target starts on.
+  effectiveFrom DateTime    @db.Date
+  targetSteps   Int
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([groupMemberId, effectiveFrom])
+}
+
+model StepPenalty {
+  id            String      @id @default(cuid())
+  groupMemberId String
+  groupMember   GroupMember @relation(fields: [groupMemberId], references: [id], onDelete: Cascade)
+  /// Calendar date this penalty rate starts on.
+  effectiveFrom DateTime    @db.Date
+  /// Charge per 500 steps below the covering target.
+  amount        Decimal     @db.Decimal(10, 2)
+  unit          PenaltyUnit
+  /// Required when unit is OTHER; ignored otherwise.
+  unitLabel     String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@unique([groupMemberId, effectiveFrom])
 }
 
 /// Cached per-day step total: one row per (user, night).

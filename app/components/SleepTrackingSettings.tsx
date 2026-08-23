@@ -2,6 +2,10 @@
 
 import { useActionState, useState } from "react";
 import { ConfirmForm } from "@/components/ConfirmForm";
+import {
+  StepTrackingSettings,
+  type StepMemberView,
+} from "@/components/StepTrackingSettings";
 import type { ActionState } from "@/lib/actions/profile";
 import {
   deleteSleepOverride,
@@ -130,10 +134,12 @@ function BedtimeSelect({
 
 function TrackingToggle({
   groupId,
-  enabled,
+  sleepEnabled,
+  stepEnabled,
 }: {
   groupId: string;
-  enabled: boolean;
+  sleepEnabled: boolean;
+  stepEnabled: boolean;
 }) {
   const [state, action, pending] = useActionState(updateGroupTracking, {});
 
@@ -145,7 +151,7 @@ function TrackingToggle({
           type="checkbox"
           name="sleepTracking"
           value="on"
-          defaultChecked={enabled}
+          defaultChecked={sleepEnabled}
           className="mt-0.5"
         />
         <span>
@@ -153,6 +159,22 @@ function TrackingToggle({
           <span className="mt-1 block text-xs text-neutral-500">
             When this is on, you can set each member’s bedtime schedule. Unchecking
             hides the editor but keeps saved schedules.
+          </span>
+        </span>
+      </label>
+      <label className="flex items-start gap-3 text-sm">
+        <input
+          type="checkbox"
+          name="stepTracking"
+          value="on"
+          defaultChecked={stepEnabled}
+          className="mt-0.5"
+        />
+        <span>
+          <span className="font-medium">Daily step count</span>
+          <span className="mt-1 block text-xs text-neutral-500">
+            When this is on, you can set each member’s step target and penalty.
+            Unchecking hides the editor but keeps saved targets.
           </span>
         </span>
       </label>
@@ -556,13 +578,17 @@ function PenaltyForm({
 export function SleepTrackingSettings({
   groupId,
   sleepTrackingEnabled,
+  stepTrackingEnabled,
   members,
+  stepMembers,
   timeZones,
   defaultDate,
 }: {
   groupId: string;
   sleepTrackingEnabled: boolean;
+  stepTrackingEnabled: boolean;
   members: SleepMemberView[];
+  stepMembers: StepMemberView[];
   timeZones: string[];
   defaultDate: string;
 }) {
@@ -574,14 +600,18 @@ export function SleepTrackingSettings({
       </p>
       <div className="mt-4 rounded-md border border-neutral-200 bg-white p-4">
         <TrackingToggle
-          key={String(sleepTrackingEnabled)}
+          key={`${sleepTrackingEnabled}-${stepTrackingEnabled}`}
           groupId={groupId}
-          enabled={sleepTrackingEnabled}
+          sleepEnabled={sleepTrackingEnabled}
+          stepEnabled={stepTrackingEnabled}
         />
       </div>
 
       {sleepTrackingEnabled ? (
         <div className="mt-4 space-y-4">
+          <h3 className="text-sm font-medium text-neutral-700">
+            Sleep time based on gadget usage
+          </h3>
           {members.map((member) => (
             <MemberSleepCard
               key={member.id}
@@ -592,6 +622,14 @@ export function SleepTrackingSettings({
             />
           ))}
         </div>
+      ) : null}
+
+      {stepTrackingEnabled ? (
+        <StepTrackingSettings
+          groupId={groupId}
+          members={stepMembers}
+          defaultDate={defaultDate}
+        />
       ) : null}
     </section>
   );

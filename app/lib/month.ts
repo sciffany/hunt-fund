@@ -58,9 +58,3 @@ export function weekdayShort(dateOnly: string): string {
 export function dayOfMonth(dateOnly: string): number {
   return Number(dateOnly.slice(8, 10));
 }
-
-export function isWeekend(dateOnly: string): boolean {
-  const [year, month, day] = dateOnly.split("-").map(Number);
-  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-  return weekday === 0 || weekday === 6;
-}

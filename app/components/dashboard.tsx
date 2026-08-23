@@ -5,35 +5,10 @@ import {
   dayOfMonth,
   formatMonthLabel,
   formatYearMonth,
-  isWeekend,
   shiftYearMonth,
   weekdayShort,
   type YearMonth,
 } from "@/lib/month";
-
-const AVATAR_TONES = [
-  "bg-sky-100 text-sky-800",
-  "bg-violet-100 text-violet-800",
-  "bg-amber-100 text-amber-900",
-  "bg-emerald-100 text-emerald-800",
-  "bg-rose-100 text-rose-800",
-  "bg-teal-100 text-teal-800",
-] as const;
-
-function memberInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] ?? ""}${parts[parts.length - 1]?.[0] ?? ""}`.toUpperCase();
-}
-
-function memberAvatarTone(name: string): string {
-  let hash = 0;
-  for (const char of name) {
-    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  }
-  return AVATAR_TONES[hash % AVATAR_TONES.length];
-}
 
 export function DashboardMonthNav({
   groupId,
@@ -85,7 +60,7 @@ export function DashboardSection({
 }) {
   return (
     <section className="mt-6 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-100 px-4 py-3.5">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-200 px-4 py-3.5">
         <div>
           <h2 className="text-sm font-semibold text-neutral-900">{title}</h2>
           {description ? (
@@ -99,20 +74,6 @@ export function DashboardSection({
   );
 }
 
-function MemberColumnHeader({ name }: { name: string }) {
-  return (
-    <div className="flex min-w-0 items-center gap-2">
-      <span
-        aria-hidden
-        className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${memberAvatarTone(name)}`}
-      >
-        {memberInitials(name)}
-      </span>
-      <span className="truncate">{name}</span>
-    </div>
-  );
-}
-
 export function DashboardMetricCell({
   value,
   flagged,
@@ -123,11 +84,13 @@ export function DashboardMetricCell({
   penaltyLabel: string | null;
 }) {
   return (
-    <div className={`flex h-full min-h-[2.5rem] items-start px-3 py-2 ${flagged ? "bg-rose-50" : ""}`}>
+    <div
+      className={`flex h-14 items-center justify-end overflow-hidden px-3 ${flagged ? "bg-rose-50" : ""}`}
+    >
       {value === null ? (
         <span className="text-neutral-300">—</span>
       ) : (
-        <div>
+        <div className="text-right leading-tight">
           <span
             className={`tabular-nums ${
               flagged ? "font-medium text-rose-950" : "text-neutral-800"
@@ -146,10 +109,8 @@ export function DashboardMetricCell({
   );
 }
 
-function rowSurfaceClass(date: string, today: string): string {
-  if (date === today) return "bg-sky-50";
-  if (isWeekend(date)) return "bg-neutral-50";
-  return "bg-white";
+function rowSurfaceClass(date: string): string {
+  return dayOfMonth(date) % 2 === 0 ? "bg-neutral-50" : "bg-white";
 }
 
 export function DashboardMonthTable({
@@ -184,7 +145,7 @@ export function DashboardMonthTable({
           ))}
         </colgroup>
         <thead>
-          <tr className="border-b border-neutral-200">
+          <tr className="border-b border-neutral-300">
             <th
               scope="col"
               className="sticky left-0 z-20 bg-neutral-50 px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-wider text-neutral-500 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)]"
@@ -196,9 +157,9 @@ export function DashboardMonthTable({
                 key={member.id}
                 scope="col"
                 title={member.displayName}
-                className="border-l border-neutral-100 bg-neutral-50 px-3 py-2.5 text-left text-xs font-medium text-neutral-700"
+                className="min-w-0 border-l border-neutral-200 bg-neutral-50 px-3 py-2.5 text-left text-xs font-medium text-neutral-700"
               >
-                <MemberColumnHeader name={member.displayName} />
+                <span className="block truncate">{member.displayName}</span>
               </th>
             ))}
           </tr>
@@ -206,24 +167,20 @@ export function DashboardMonthTable({
         <tbody>
           {dates.map((date) => {
             const isToday = date === today;
-            const surface = rowSurfaceClass(date, today);
+            const surface = rowSurfaceClass(date);
 
             return (
-              <tr key={date} className={`border-t border-neutral-100 ${surface}`}>
+              <tr key={date} className={`border-t border-neutral-200 ${surface}`}>
                 <th
                   scope="row"
-                  className={`sticky left-0 z-10 px-3 py-2 text-left font-medium shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] ${surface} ${
-                    isToday ? "text-sky-950" : "text-neutral-700"
-                  }`}
+                  className={`sticky left-0 z-10 h-14 px-3 text-left font-medium text-neutral-700 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] ${surface}`}
                 >
-                  <div className="flex items-center justify-between gap-1">
+                  <div className="flex h-full items-center justify-between gap-1">
                     <span className="flex items-baseline gap-1.5">
-                      <span className="tabular-nums">{dayOfMonth(date)}</span>
-                      <span
-                        className={`text-xs font-normal ${
-                          isToday ? "font-medium text-sky-700" : "text-neutral-500"
-                        }`}
-                      >
+                      <span className="inline-block w-6 text-right tabular-nums">
+                        {dayOfMonth(date)}
+                      </span>
+                      <span className="text-xs font-normal text-neutral-500">
                         {isToday ? "Today" : weekdayShort(date)}
                       </span>
                     </span>
@@ -231,7 +188,7 @@ export function DashboardMonthTable({
                   </div>
                 </th>
                 {members.map((member) => (
-                  <td key={member.id} className="h-px border-l border-neutral-100 p-0">
+                  <td key={member.id} className="h-14 border-l border-neutral-200 p-0">
                     {renderCell(member.id, date)}
                   </td>
                 ))}
@@ -240,7 +197,7 @@ export function DashboardMonthTable({
           })}
         </tbody>
         <tfoot>
-          <tr className="border-t border-neutral-200 bg-rose-50">
+          <tr className="border-t border-neutral-300 bg-rose-50">
             <th
               scope="row"
               className="sticky left-0 z-10 bg-rose-50 px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-wider text-rose-800 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)]"
@@ -250,7 +207,7 @@ export function DashboardMonthTable({
             {members.map((member, index) => (
               <td
                 key={member.id}
-                className="border-l border-rose-100 px-3 py-2.5 font-medium tabular-nums text-rose-900"
+                className="border-l border-rose-200 px-3 py-2.5 text-right font-medium tabular-nums text-rose-900"
               >
                 {footerValues[index]}
               </td>

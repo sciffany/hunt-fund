@@ -118,6 +118,7 @@ export function formatPenaltyCharge(
   unitLabel?: string | null,
 ): string {
   const number = formatChargeNumber(cents, unit);
+  if (unit === "MONEY") return `$${number}`;
   if (unit === "CHORE") return `${number} chores`;
   if (unit === "OTHER" && unitLabel) return `${number} ${unitLabel}`;
   return number;

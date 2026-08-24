@@ -189,6 +189,15 @@ Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" |
 
 ### Troubleshooting (Windows)
 
+- `<urlopen error unknown url type: https>` — Python never registered
+  HTTPS. Typical causes: Microsoft Store Python, a venv whose OpenSSL
+  DLLs are not next to `pythonw.exe`, or a system HTTPS proxy (Clash /
+  VPN / "automatically detect settings"). Copy the updated
+  `sleep_tracker.py` onto the machine and rerun
+  `install-windows.ps1` (it copies `libssl`/`libcrypto` into
+  `.venv\Scripts` and bypasses the WinINET proxy). If it still fails,
+  install Python from [python.org](https://www.python.org/downloads/windows/),
+  delete `.venv`, and rerun the installer.
 - No log file appears — the task ran but Python crashed before
   configuring logging. Check the task's `LastTaskResult` via
   `Get-ScheduledTask 'SleepTracker' | Get-ScheduledTaskInfo`. Then run

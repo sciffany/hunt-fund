@@ -17,23 +17,126 @@ The tracker only reads whether input happened, never what keys were pressed.
 
 from __future__ import annotations
 
+import os
+import sys
+from pathlib import Path
+from typing import NoReturn
+
+# pythonw.exe from Task Scheduler has a stripped PATH, so OpenSSL's DLLs
+# (next to the *base* interpreter, not the venv) are not found. `_ssl` then
+# fails to import, urllib silently omits HTTPSHandler, and urlopen(https://...)
+# raises URLError: unknown url type: https. Fix the search path before any
+# import that pulls in ssl/urllib.
+#
+# The handles from os.add_dll_directory MUST be kept alive. Discarding them
+# immediately removes the directory from the search path (the returned object
+# unregisters itself on GC / refcount 0). PATH is also not searched for
+# extension-module deps on Python 3.8+, so this is the actual fix.
+_WINDOWS_DLL_DIRS: list[object] = []
+
+
+def _prepare_windows_ssl() -> None:
+    if sys.platform != "win32":
+        return
+    dirs: list[str] = []
+
+    def _add(raw: str | None) -> None:
+        if not raw:
+            return
+        path = os.path.normpath(raw)
+        if path not in dirs and os.path.isdir(path):
+            dirs.append(path)
+
+    cfg = Path(sys.prefix) / "pyvenv.cfg"
+    if cfg.is_file():
+        for line in cfg.read_text(encoding="utf-8", errors="replace").splitlines():
+            key, _, value = line.partition("=")
+            key = key.strip().lower()
+            value = value.strip().strip('"')
+            if key == "home":
+                _add(value)
+            elif key == "executable":
+                _add(str(Path(value).parent))
+    _add(getattr(sys, "base_prefix", None))
+    _add(sys.prefix)
+    _add(str(Path(sys.executable).resolve().parent))
+
+    # python.org: libssl next to python.exe; _ssl.pyd in DLLs\.
+    # conda: OpenSSL in Library\bin.
+    for base in list(dirs):
+        _add(os.path.join(base, "DLLs"))
+        _add(os.path.join(base, "Library", "bin"))
+
+    add_dll = getattr(os, "add_dll_directory", None)
+    for directory in dirs:
+        if add_dll is not None:
+            try:
+                _WINDOWS_DLL_DIRS.append(add_dll(directory))
+            except OSError:
+                pass
+    if dirs:
+        os.environ["PATH"] = os.pathsep.join(dirs) + os.pathsep + os.environ.get("PATH", "")
+
+
+def _die(message: str, code: int = 2) -> NoReturn:
+    # pythonw.exe has no console; sys.stderr is None. Write to the log file
+    # the VBS wrapper sets so the error is not silent.
+    stream = sys.stderr if sys.stderr is not None else sys.stdout
+    if stream is not None:
+        print(message, file=stream)
+    else:
+        log_path = os.environ.get("SLEEP_TRACKER_LOG")
+        if log_path:
+            try:
+                with open(log_path, "a", encoding="utf-8") as fh:
+                    fh.write(message + "\n")
+            except OSError:
+                pass
+    raise SystemExit(code)
+
+
+_prepare_windows_ssl()
+
+try:
+    import ssl
+except ImportError:
+    _die(
+        "error: this Python has no SSL support, so HTTPS ingest cannot work. "
+        "On Windows install Python from python.org (not the Microsoft Store), "
+        "delete .venv, and rerun install-windows.ps1."
+    )
+
 import atexit
+import http.client
+import importlib
 import json
 import logging
-import os
 import signal
 import socket
-import sys
 import threading
 import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timezone
 
+# sitecustomize / a .pth file may have imported urllib before OpenSSL was
+# searchable, in which case HTTPSHandler is missing even though `ssl` works.
+if not hasattr(http.client, "HTTPSConnection") or not hasattr(
+    urllib.request, "HTTPSHandler"
+):
+    importlib.reload(http.client)
+    importlib.reload(urllib.request)
+if not hasattr(urllib.request, "HTTPSHandler"):
+    _die(
+        "error: urllib has no HTTPS support. "
+        "On Windows install Python from python.org (not the Microsoft Store), "
+        "delete .venv, and rerun install-windows.ps1."
+    )
+
 from dotenv import load_dotenv
 from pynput import keyboard, mouse
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # Under pythonw.exe on Windows, sys.stdout / sys.stderr are None. Guard the
 # line-buffering tweak so the process doesn't crash before logging is set up.
@@ -47,13 +150,29 @@ if sys.stdout is not None:
 def _require_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
-        print(f"error: environment variable {name} is required", file=sys.stderr)
-        sys.exit(2)
+        _die(f"error: environment variable {name} is required")
     return value
 
 
-APP_URL = _require_env("APP_URL").rstrip("/")
+def _require_app_url() -> str:
+    value = _require_env("APP_URL").strip().rstrip("/")
+    if not value.startswith(("https://", "http://")):
+        _die(f"error: APP_URL must be an http(s) origin, got {value[:40]!r}")
+    return value
+
+
+APP_URL = _require_app_url()
 INGEST_TOKEN = _require_env("INGEST_TOKEN")
+
+# Direct connection. Windows otherwise injects IE/WinINET proxy settings
+# (Clash, VPNs, "automatically detect settings"), and urllib then tries to
+# open an https proxy URL — which is the other common source of
+# "unknown url type: https" when SSL did not load.
+_OPENER = urllib.request.build_opener(
+    urllib.request.ProxyHandler({}),
+    urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+)
+urllib.request.install_opener(_OPENER)
 USER_NAME = os.environ.get("USER_NAME") or socket.gethostname()
 
 # Local-time window during which activity events are recorded.
@@ -129,14 +248,20 @@ class ActivityTracker:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=15) as response:
+            with _OPENER.open(request, timeout=15) as response:
                 response.read()
             log.info("logged %s at %s", event_type, event_time.isoformat())
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")[:200]
             log.error("failed to log %s: HTTP %s %s", event_type, exc.code, body)
         except Exception as exc:  # network / auth / schema errors
-            log.error("failed to log %s: %s", event_type, exc)
+            extra = ""
+            if "unknown url type: https" in str(exc):
+                extra = (
+                    "  (Python never registered HTTPS. Install Python from "
+                    "python.org, delete .venv, and rerun install-windows.ps1)"
+                )
+            log.error("failed to log %s: %s%s", event_type, exc, extra)
 
     def flush_loop(self) -> None:
         while not self.stop_event.is_set():
@@ -156,12 +281,13 @@ def main() -> None:
     tracker = ActivityTracker(session_id)
 
     log.info(
-        "sleep_tracker starting user=%s session=%s window=%02d:00-%02d:00 flush=%ds",
+        "sleep_tracker starting user=%s session=%s window=%02d:00-%02d:00 flush=%ds ssl=%s",
         USER_NAME,
         session_id,
         WINDOW_START_HOUR,
         WINDOW_END_HOUR,
         FLUSH_INTERVAL_SECONDS,
+        getattr(ssl, "OPENSSL_VERSION", "unknown"),
     )
     tracker.log_event("app_start")
 

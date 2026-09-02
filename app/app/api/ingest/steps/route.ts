@@ -49,9 +49,9 @@ export async function POST(request: Request) {
 
   const eventTime = new Date();
 
-  await prisma.$transaction(
-    days.flatMap((row) => [
-      prisma.stepEvent.create({
+  await prisma.$transaction(async (tx) => {
+    for (const row of days) {
+      await tx.stepEvent.create({
         data: {
           userId: user.id,
           day: row.day,
@@ -59,18 +59,31 @@ export async function POST(request: Request) {
           eventTime,
           sessionId,
         },
-      }),
-      prisma.stepNight.upsert({
-        where: { userId_night: { userId: user.id, night: row.day } },
-        create: {
+      });
+
+      // Health Connect can under-report a day (watch not synced, permission
+      // gap). Never replace a stored total with a strictly smaller push.
+      await tx.stepNight.createMany({
+        data: [
+          {
+            userId: user.id,
+            night: row.day,
+            steps: row.stepCount,
+            updatedAt: eventTime,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      await tx.stepNight.updateMany({
+        where: {
           userId: user.id,
           night: row.day,
-          steps: row.stepCount,
+          steps: { lte: row.stepCount },
         },
-        update: { steps: row.stepCount },
-      }),
-    ]),
-  );
+        data: { steps: row.stepCount },
+      });
+    }
+  });
 
   return NextResponse.json({ ok: true, days: days.length });
 }

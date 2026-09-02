@@ -407,8 +407,11 @@ function isLastActivityEventType(value: string): value is LastActivityEventType 
 
 /**
  * Latest gadget activity in [start, end). An `APP_CLOSE` as the last event
- * means we can't tell when they actually stopped, so treat that as still up
- * at the end of the window (6:00 AM).
+ * means the desktop tracker was stopped while the computer was still up, so
+ * we can't tell when they actually stopped using it — treat that as still up
+ * at the end of the window (6:00 AM). A `SYSTEM_SHUTDOWN` is not listed here:
+ * shutting down the laptop is expected, and the last `ACTIVITY` timestamp
+ * still stands.
  */
 export function lastActivityInWindow(
   events: { eventType: string; eventTime: Date }[],

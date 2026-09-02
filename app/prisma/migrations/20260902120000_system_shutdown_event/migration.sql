@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "SleepEventType" ADD VALUE 'SYSTEM_SHUTDOWN';

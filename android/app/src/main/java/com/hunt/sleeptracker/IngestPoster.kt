@@ -23,8 +23,9 @@ data class DaySteps(val day: LocalDate, val stepCount: Int)
  * with `eventType = PHONE_ACTIVITY`. Posts are skipped outside the
  * configured local-time window (same 8pm–6am default as desktop).
  *
- * Steps: a single request upserts the last several calendar days into
- * `StepEvent` + `StepNight`. The foreground service posts about every
+ * Steps: a single request posts the last several calendar days into
+ * `StepEvent` + `StepNight` (the server keeps the higher daily total).
+ * The foreground service posts about every
  * hour (and at local midnight); the activity can also send on demand.
  *
  * [userName] is resolved from [UserSettings] on each post so a settings

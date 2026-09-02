@@ -9,11 +9,16 @@ happened, plus the timestamp.
 
 ## What it logs
 
-| event       | when                                                                   |
-|-------------|------------------------------------------------------------------------|
-| `app_start` | when the tracker starts (always)                                       |
-| `activity`  | timestamp of most recent input, flushed at most every 30s, only in-window |
-| `app_close` | when the tracker exits cleanly (always) — SIGTERM, SIGINT, or SIGHUP   |
+| event              | when                                                                 |
+|--------------------|----------------------------------------------------------------------|
+| `app_start`        | when the tracker starts (always)                                     |
+| `activity`         | timestamp of most recent input, flushed at most every 30s, only in-window |
+| `system_shutdown`  | OS is shutting down, restarting, or logging out                      |
+| `app_close`        | tracker exited *without* a system shutdown — SIGINT, `launchctl unload`, or kill |
+
+`app_close` is scored as "still up at 6am" because the tracker stopped while
+the computer was likely still on. `system_shutdown` is not: shutting down
+(or logging out) is expected, and the last `activity` timestamp still counts.
 
 Each event also carries a `session_id` (UUID per run) and a `user_name`
 that must match a hunt-fund account username.
@@ -64,10 +69,12 @@ tail -F ~/Library/Logs/sleep_tracker.out.log ~/Library/Logs/sleep_tracker.err.lo
 ```
 
 `out.log` gets the app's own log lines; `err.log` gets Python tracebacks
-if anything crashes. You should see an `app_start` line, then `activity`
-lines every 30s while you move the mouse (after 8pm). In Neon / Prisma
-Studio, new `SleepEvent` rows (`APP_START`, then `ACTIVITY`) should
-appear for that user.
+if anything crashes. You should see an `app_start` line, a `power watch:
+listening for macOS shutdown/logout` line, then `activity` lines every
+30s while you move the mouse (after 8pm). In Neon / Prisma Studio, new
+`SleepEvent` rows (`APP_START`, then `ACTIVITY`) should appear for that
+user. After pulling tracker changes, rerun `./install-macos.sh` (or
+`launchctl kickstart`) so the running agent reloads.
 
 ### Troubleshooting
 
@@ -101,9 +108,11 @@ launchctl list | grep com.sleeptracker.agent
 ./uninstall-macos.sh
 ```
 
-Stopping the agent via `launchctl unload` sends SIGTERM, which fires
-the `app_close` handler before the process exits — so intentional
-shutdowns get logged.
+Stopping the agent via `launchctl unload` sends SIGTERM *without* a shutdown
+notification, which fires `app_close` — so unloading the tracker while the
+computer is still on is logged as a stop. Shut Down / Restart / Log Out from
+the Apple menu posts a loginwindow notification first, which is logged as
+`system_shutdown` instead.
 
 ## Windows
 
@@ -203,10 +212,11 @@ Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" |
   `Get-ScheduledTask 'SleepTracker' | Get-ScheduledTaskInfo`. Then run
   the script in the foreground to see the traceback:
   `.\.venv\Scripts\python.exe .\sleep_tracker.py`
-- `app_close` never appears at shutdown — Windows terminates
-  `pythonw.exe` on logoff without a chance to run `atexit`, so clean
-  shutdowns aren't always logged. `app_start` at the next logon is the
-  reliable signal that the previous session ended.
+- `system_shutdown` may not appear at logoff — `pythonw.exe` can be
+  killed before the ingest POST finishes. Scoring still uses the last
+  `activity` row (a missing close event is *not* treated as cheating).
+  `app_start` at the next logon is the reliable signal that the previous
+  session ended.
 - `Register-ScheduledTask : Access is denied` — you're trying to
   register under a different user. The install script scopes the task
   to `$env:USERNAME`; run it from the account that will actually be

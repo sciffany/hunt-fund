@@ -6,11 +6,12 @@ to the hunt-fund ingest API (Neon via Prisma) so a partner/roommate can
 hold you accountable.
 
 Events logged:
-    app_start  - when the tracker process starts (always, regardless of window)
-    activity   - the timestamp of the most recent mouse/keyboard event,
-                 flushed at most once every FLUSH_INTERVAL_SECONDS while inside
-                 the tracking window
-    app_close  - when the tracker process shuts down cleanly (always)
+    app_start         - when the tracker process starts (always, regardless of window)
+    activity          - the timestamp of the most recent mouse/keyboard event,
+                        flushed at most once every FLUSH_INTERVAL_SECONDS while inside
+                        the tracking window
+    system_shutdown   - OS is shutting down, restarting, or logging out
+    app_close         - tracker exited without a system shutdown (unload / quit / kill)
 
 The tracker only reads whether input happened, never what keys were pressed.
 """
@@ -20,7 +21,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import NoReturn
+from typing import Callable, NoReturn
 
 # pythonw.exe from Task Scheduler has a stripped PATH, so OpenSSL's DLLs
 # (next to the *base* interpreter, not the venv) are not found. `_ssl` then
@@ -205,6 +206,238 @@ logging.basicConfig(
 )
 log = logging.getLogger("sleep_tracker")
 
+# ctypes callbacks must be kept alive; the OS holds a raw function pointer.
+_POWER_WATCH_REFS: list[object] = []
+
+# SIGTERM from launchd looks the same for "user unloaded the agent" and
+# "the laptop is shutting down". Wait this long for the OS power
+# notification that only the latter posts.
+_POWER_WAIT_SECONDS = 0.75
+
+
+class PowerWatch:
+    """Best-effort record of whether the OS is ending the session.
+
+    SIGTERM/SIGHUP cannot tell shutdown apart from `launchctl unload` or
+    Activity Monitor quit. macOS loginwindow notifications and Windows
+    WM_ENDSESSION / CTRL_SHUTDOWN_EVENT can.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.pending = False
+        self.confirmed = False
+        self.confirmed_event = threading.Event()
+
+    def note(self, kind: str) -> bool:
+        """Record a power event. Return True if this newly confirmed a stop."""
+        with self._lock:
+            if kind == "cancelled":
+                self.pending = False
+                if not self.confirmed:
+                    self.confirmed_event.clear()
+                log.info("system shutdown/logout was cancelled")
+                return False
+            if kind == "shutdown_pending":
+                self.pending = True
+                self.confirmed_event.set()
+                log.info("system shutdown/logout initiated (may still cancel)")
+                return False
+            already = self.confirmed
+            self.pending = True
+            self.confirmed = True
+            self.confirmed_event.set()
+            if not already:
+                log.info("system shutdown/logout confirmed (%s)", kind)
+            return not already
+
+    def is_system_stop(self) -> bool:
+        with self._lock:
+            return self.confirmed or self.pending
+
+
+def start_power_watcher(on_event: Callable[[str], None]) -> None:
+    if sys.platform == "darwin":
+        target = _watch_macos_power
+    elif sys.platform == "win32":
+        target = _watch_windows_power
+    else:
+        log.info("no OS power watcher on platform %s", sys.platform)
+        return
+
+    def run() -> None:
+        try:
+            target(on_event)
+        except Exception:
+            log.exception("power watch: watcher thread crashed")
+
+    thread = threading.Thread(
+        target=run,
+        name="power-watch",
+        daemon=True,
+    )
+    thread.start()
+
+
+def _watch_macos_power(on_event: Callable[[str], None]) -> None:
+    import ctypes
+    import ctypes.util
+    import select
+    import struct
+
+    lib_name = ctypes.util.find_library("c")
+    if not lib_name:
+        log.warning("power watch: libc not found")
+        return
+    libc = ctypes.CDLL(lib_name)
+    register = libc.notify_register_file_descriptor
+    register.argtypes = [
+        ctypes.c_char_p,
+        ctypes.POINTER(ctypes.c_int),
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_int),
+    ]
+    register.restype = ctypes.c_uint32
+
+    # loginwindow posts these before SIGTERM on Shut Down / Restart / Log Out.
+    # shutdownInitiated can still be cancelled; logoutNoReturn cannot.
+    names = (
+        (b"com.apple.system.loginwindow.shutdownInitiated", "shutdown_pending"),
+        (b"com.apple.system.loginwindow.restartinitiated", "shutdown_pending"),
+        (b"com.apple.system.loginwindow.logoutInitiated", "shutdown_pending"),
+        (b"com.apple.system.loginwindow.sulogoutinitiated", "shutdown_pending"),
+        (b"com.apple.system.loginwindow.logoutcancelled", "cancelled"),
+        (b"com.apple.system.loginwindow.logoutNoReturn", "shutdown"),
+    )
+    notify_reuse = 0x00000001
+    fd = ctypes.c_int(-1)
+    token_kind: dict[int, str] = {}
+    first = True
+    for name, kind in names:
+        token = ctypes.c_int()
+        flags = 0 if first else notify_reuse
+        status = register(name, ctypes.byref(fd), flags, ctypes.byref(token))
+        if status != 0:
+            log.warning("power watch: notify_register failed for %s (%s)", name.decode(), status)
+            continue
+        first = False
+        token_kind[token.value] = kind
+
+    if fd.value < 0 or not token_kind:
+        log.warning("power watch: no macOS loginwindow notifications registered")
+        return
+    log.info("power watch: listening for macOS shutdown/logout")
+
+    try:
+        while True:
+            ready, _, _ = select.select([fd.value], [], [])
+            if not ready:
+                continue
+            data = os.read(fd.value, 4)
+            if len(data) < 4:
+                break
+            token_be = struct.unpack("!I", data)[0]
+            token_host = struct.unpack("@I", data)[0]
+            kind = token_kind.get(token_be) or token_kind.get(token_host)
+            if kind:
+                on_event(kind)
+    except Exception:
+        log.exception("power watch: macOS watcher stopped")
+
+
+def _watch_windows_power(on_event: Callable[[str], None]) -> None:
+    try:
+        _watch_windows_power_inner(on_event)
+    except Exception:
+        log.exception("power watch: Windows watcher stopped")
+
+
+def _watch_windows_power_inner(on_event: Callable[[str], None]) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    try:
+        # Ask Windows to notify us early so the ingest POST can finish.
+        kernel32.SetProcessShutdownParameters(0x3FF, 0)
+    except Exception:
+        pass
+
+    wm_queryendsession = 0x0011
+    wm_endsession = 0x0016
+    lresult = ctypes.c_ssize_t
+    wndproc_type = ctypes.WINFUNCTYPE(
+        lresult, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+    )
+
+    @wndproc_type
+    def wndproc(hwnd, msg, wparam, lparam):
+        if msg == wm_queryendsession:
+            on_event("shutdown_pending")
+            return 1
+        if msg == wm_endsession:
+            on_event("shutdown" if wparam else "cancelled")
+            return 0
+        return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+
+    _POWER_WATCH_REFS.append(wndproc)
+
+    class WndClassW(ctypes.Structure):
+        _fields_ = [
+            ("style", wintypes.UINT),
+            ("lpfnWndProc", wndproc_type),
+            ("cbClsExtra", ctypes.c_int),
+            ("cbWndExtra", ctypes.c_int),
+            ("hInstance", wintypes.HINSTANCE),
+            ("hIcon", wintypes.HANDLE),
+            ("hCursor", wintypes.HANDLE),
+            ("hbrBackground", wintypes.HANDLE),
+            ("lpszMenuName", wintypes.LPCWSTR),
+            ("lpszClassName", wintypes.LPCWSTR),
+        ]
+
+    class_name = "SleepTrackerPowerWatch"
+    wc = WndClassW()
+    wc.lpfnWndProc = wndproc
+    wc.lpszClassName = class_name
+    wc.hInstance = kernel32.GetModuleHandleW(None)
+    if not user32.RegisterClassW(ctypes.byref(wc)):
+        log.warning("power watch: RegisterClassW failed (%s)", kernel32.GetLastError())
+    else:
+        hwnd_message = ctypes.c_void_p(-3)
+        hwnd = user32.CreateWindowExW(
+            0, class_name, "", 0, 0, 0, 0, 0,
+            hwnd_message, None, wc.hInstance, None,
+        )
+        if not hwnd:
+            log.warning("power watch: CreateWindowExW failed (%s)", kernel32.GetLastError())
+        else:
+            log.info("power watch: listening for Windows WM_ENDSESSION")
+
+    handler_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+    ctrl_shutdown = 6
+    ctrl_logoff = 5
+
+    @handler_type
+    def ctrl_handler(ctrl_type):
+        if ctrl_type in (ctrl_shutdown, ctrl_logoff):
+            on_event("shutdown")
+            return True
+        return False
+
+    _POWER_WATCH_REFS.append(ctrl_handler)
+    kernel32.SetConsoleCtrlHandler(ctrl_handler, True)
+
+    msg = wintypes.MSG()
+    while True:
+        result = user32.GetMessageW(ctypes.byref(msg), None, 0, 0)
+        if result == 0 or result == -1:
+            break
+        user32.TranslateMessage(ctypes.byref(msg))
+        user32.DispatchMessageW(ctypes.byref(msg))
+
 
 def in_window(now_local: datetime) -> bool:
     """Return True if `now_local` falls inside the configured tracking window."""
@@ -263,22 +496,27 @@ class ActivityTracker:
                 )
             log.error("failed to log %s: %s%s", event_type, exc, extra)
 
+    def flush_pending(self) -> None:
+        if not in_window(datetime.now()):
+            return
+        with self._lock:
+            latest = self._last_activity
+        if latest is not None and (
+            self._last_flushed is None or latest > self._last_flushed
+        ):
+            self.log_event("activity", latest)
+            self._last_flushed = latest
+
     def flush_loop(self) -> None:
         while not self.stop_event.is_set():
-            if in_window(datetime.now()):
-                with self._lock:
-                    latest = self._last_activity
-                if latest is not None and (
-                    self._last_flushed is None or latest > self._last_flushed
-                ):
-                    self.log_event("activity", latest)
-                    self._last_flushed = latest
+            self.flush_pending()
             self.stop_event.wait(FLUSH_INTERVAL_SECONDS)
 
 
 def main() -> None:
     session_id = str(uuid.uuid4())
     tracker = ActivityTracker(session_id)
+    power = PowerWatch()
 
     log.info(
         "sleep_tracker starting user=%s session=%s window=%02d:00-%02d:00 flush=%ds ssl=%s",
@@ -291,22 +529,36 @@ def main() -> None:
     )
     tracker.log_event("app_start")
 
-    # Ensure app_close fires exactly once, whether we exit via signal,
-    # atexit, or an exception in the main loop.
+    # Ensure the exit event fires exactly once, whether we exit via signal,
+    # atexit, an OS power notification, or an exception in the main loop.
     closed = threading.Event()
+    close_lock = threading.Lock()
 
-    def close_once() -> None:
-        if closed.is_set():
-            return
-        closed.set()
-        tracker.log_event("app_close")
-        tracker.stop_event.set()
+    def close_once(*, wait_for_power: bool = False) -> None:
+        # Wait before claiming the close so a racing OS shutdown
+        # notification can log system_shutdown instead of app_close.
+        if wait_for_power and not power.is_system_stop():
+            power.confirmed_event.wait(_POWER_WAIT_SECONDS)
+        with close_lock:
+            if closed.is_set():
+                return
+            closed.set()
+            tracker.flush_pending()
+            event_type = "system_shutdown" if power.is_system_stop() else "app_close"
+            tracker.log_event(event_type)
+            tracker.stop_event.set()
+
+    def on_power_event(kind: str) -> None:
+        if power.note(kind):
+            close_once()
 
     def handle_signal(signum, _frame) -> None:
         log.info("received signal %s, shutting down", signum)
-        close_once()
+        wait = signum in (signal.SIGTERM, getattr(signal, "SIGHUP", -1))
+        close_once(wait_for_power=wait)
         sys.exit(0)
 
+    start_power_watcher(on_power_event)
     atexit.register(close_once)
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)

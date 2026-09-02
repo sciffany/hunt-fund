@@ -3,7 +3,7 @@
 create table if not exists public.sleep_events (
     id          bigint generated always as identity primary key,
     user_name   text        not null,
-    event_type  text        not null check (event_type in ('app_start', 'activity', 'app_close', 'phone_activity')),
+    event_type  text        not null check (event_type in ('app_start', 'activity', 'app_close', 'phone_activity', 'system_shutdown')),
     event_time  timestamptz not null default now(),
     session_id  uuid,
     created_at  timestamptz not null default now()
@@ -15,7 +15,7 @@ alter table public.sleep_events
     drop constraint if exists sleep_events_event_type_check;
 alter table public.sleep_events
     add  constraint sleep_events_event_type_check
-    check (event_type in ('app_start', 'activity', 'app_close', 'phone_activity'));
+    check (event_type in ('app_start', 'activity', 'app_close', 'phone_activity', 'system_shutdown'));
 
 create index if not exists sleep_events_user_time_idx
     on public.sleep_events (user_name, event_time desc);

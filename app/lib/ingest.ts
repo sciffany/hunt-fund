@@ -8,10 +8,12 @@ const SLEEP_EVENT_TYPES: Record<string, SleepEventType> = {
   activity: "ACTIVITY",
   app_close: "APP_CLOSE",
   phone_activity: "PHONE_ACTIVITY",
+  system_shutdown: "SYSTEM_SHUTDOWN",
   APP_START: "APP_START",
   ACTIVITY: "ACTIVITY",
   APP_CLOSE: "APP_CLOSE",
   PHONE_ACTIVITY: "PHONE_ACTIVITY",
+  SYSTEM_SHUTDOWN: "SYSTEM_SHUTDOWN",
 };
 
 const UUID_RE =

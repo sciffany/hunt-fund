@@ -43,10 +43,12 @@ function supabaseEnv(): { url: string; key: string } {
  *   - If it's an `activity` or `phone_activity`, we use its timestamp.
  *     `phone_activity` rows come from the Android app's screen-state
  *     broadcasts; `activity` rows come from the desktop tracker.
- *   - If it's an `app_close`, the desktop tracker was shut down after the
- *     person's final activity, so we can't tell when they actually stopped
+ *   - If it's an `app_close`, the desktop tracker was stopped while the
+ *     computer was still running, so we can't tell when they actually stopped
  *     being active. Treat that as "still up at the end of the tracking
  *     window" by returning 6am SGT (endIso), the maximum penalty.
+ *   - `system_shutdown` is ignored: shutting down the laptop is expected, and
+ *     the last `activity` timestamp still stands.
  *
  * Returns null if there are no relevant events in the window.
  */

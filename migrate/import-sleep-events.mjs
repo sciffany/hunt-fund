@@ -16,6 +16,7 @@ const EVENT_TYPES = {
   activity: "ACTIVITY",
   app_close: "APP_CLOSE",
   phone_activity: "PHONE_ACTIVITY",
+  system_shutdown: "SYSTEM_SHUTDOWN",
 };
 
 const CSV_PATH = new URL("./sleep_events.csv", import.meta.url);

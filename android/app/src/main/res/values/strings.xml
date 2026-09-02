@@ -7,6 +7,7 @@
     <string name="notification_text">Logging steps and last night\'s phone sessions.</string>
     <string name="btn_start">Start tracking</string>
     <string name="btn_send_last_night">Send last night</string>
+    <string name="btn_catch_up_nights">Catch up 7 nights</string>
     <string name="usage_access_granted">Usage access: granted</string>
     <string name="usage_access_missing">Usage access: not granted. Open Settings and enable this app so last night\'s unlock sessions can be read.</string>
     <string name="usage_access_unsupported">Usage access needs Android 10 or later.</string>
@@ -16,6 +17,8 @@
     <string name="usage_access_cancel">Not now</string>
     <string name="last_night_sent">Sent last night\'s phone sessions.</string>
     <string name="last_night_send_failed">Could not send last night — grant Usage access and check app.url / ingest.token.</string>
+    <string name="catch_up_nights_sent">Catching up the last 7 nights of phone sessions.</string>
+    <string name="catch_up_nights_failed">Could not catch up nights — grant Usage access and check app.url / ingest.token.</string>
     <string name="btn_enable_steps">Enable step counting</string>
     <string name="btn_steps_enabled">Phone steps on</string>
     <string name="btn_steps_hc_enabled">Health Connect steps on</string>

@@ -124,9 +124,13 @@ class ScreenStateService : Service() {
 
     /**
      * POST UsageStats sessions for any completed night not yet flushed,
-     * oldest first, up to [PHONE_CATCHUP_NIGHTS].
+     * oldest first, up to [PHONE_CATCHUP_NIGHTS]. [forceCatchup] re-posts
+     * that whole window even if nights were already marked sent.
      */
-    private fun flushPhoneSessions(forceLastNight: Boolean = false) {
+    private fun flushPhoneSessions(
+        forceLastNight: Boolean = false,
+        forceCatchup: Boolean = false,
+    ) {
         if (!UsageAccess.isSupported()) {
             Log.w(TAG, "phone sessions need API 29+")
             return
@@ -145,7 +149,7 @@ class ScreenStateService : Service() {
             return
         }
 
-        val posted = lastPostedPhoneNight()
+        val posted = if (forceCatchup) null else lastPostedPhoneNight()
         val oldest = lastCompleted.minusDays(PHONE_CATCHUP_NIGHTS - 1L)
         var night = when {
             posted == null -> oldest
@@ -304,6 +308,7 @@ class ScreenStateService : Service() {
         when (intent?.action) {
             ACTION_ENABLE_STEPS -> scheduler.execute { syncSteps() }
             ACTION_SEND_LAST_NIGHT -> scheduler.execute { flushPhoneSessions(forceLastNight = true) }
+            ACTION_CATCH_UP_NIGHTS -> scheduler.execute { flushPhoneSessions(forceCatchup = true) }
         }
         return START_STICKY
     }
@@ -370,6 +375,7 @@ class ScreenStateService : Service() {
         private const val PHONE_CATCHUP_NIGHTS = 7L
         const val ACTION_ENABLE_STEPS = "com.hunt.sleeptracker.ENABLE_STEPS"
         const val ACTION_SEND_LAST_NIGHT = "com.hunt.sleeptracker.SEND_LAST_NIGHT"
+        const val ACTION_CATCH_UP_NIGHTS = "com.hunt.sleeptracker.CATCH_UP_NIGHTS"
         const val PHONE_SESSIONS_ACTION = "com.hunt.sleeptracker.PHONE_SESSIONS"
 
         /** Live counter while the service is up; null when stopped. */

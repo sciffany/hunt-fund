@@ -89,6 +89,9 @@ class MainActivity : AppCompatActivity() {
         binding.sendLastNightButton.setOnClickListener {
             sendLastNight()
         }
+        binding.catchUpNightsButton.setOnClickListener {
+            catchUpNights()
+        }
         binding.usageAccessText.setOnClickListener {
             requestUsageAccessIfNeeded()
         }
@@ -395,6 +398,17 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, R.string.last_night_sent, Toast.LENGTH_SHORT).show()
     }
 
+    private fun catchUpNights() {
+        if (!IngestPoster.isConfigured() || !UsageAccess.hasPermission(this)) {
+            Toast.makeText(this, R.string.catch_up_nights_failed, Toast.LENGTH_LONG).show()
+            if (!UsageAccess.hasPermission(this)) requestUsageAccessIfNeeded()
+            return
+        }
+        requestNotificationPermissionIfNeeded()
+        startTrackerService(this, catchUpNights = true)
+        Toast.makeText(this, R.string.catch_up_nights_sent, Toast.LENGTH_SHORT).show()
+    }
+
     private fun requestUsageAccessIfNeeded() {
         if (!UsageAccess.isSupported()) return
         if (UsageAccess.hasPermission(this)) return
@@ -436,10 +450,12 @@ class MainActivity : AppCompatActivity() {
             context: Context,
             enableSteps: Boolean = false,
             sendLastNight: Boolean = false,
+            catchUpNights: Boolean = false,
         ) {
             val intent = Intent(context, ScreenStateService::class.java)
             intent.action = when {
                 sendLastNight -> ScreenStateService.ACTION_SEND_LAST_NIGHT
+                catchUpNights -> ScreenStateService.ACTION_CATCH_UP_NIGHTS
                 enableSteps -> ScreenStateService.ACTION_ENABLE_STEPS
                 else -> null
             }

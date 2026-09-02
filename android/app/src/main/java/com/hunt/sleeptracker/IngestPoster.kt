@@ -17,11 +17,12 @@ import java.util.concurrent.TimeUnit
 data class DaySteps(val day: LocalDate, val stepCount: Int)
 
 /**
- * Fire-and-forget POSTs to the hunt-fund Next.js ingest API (Neon via Prisma).
+ * POSTs to the hunt-fund Next.js ingest API (Neon via Prisma).
  *
- * Sleep: an unlocked-and-screen-on heartbeat becomes one `SleepEvent`
- * with `eventType = PHONE_ACTIVITY`. Posts are skipped outside the
- * configured local-time window (same 8pm–6am default as desktop).
+ * Sleep: the daily UsageStats flush posts `PHONE_SESSION_START` /
+ * `PHONE_SESSION_END` markers for one local night. Desktop still uses
+ * [post] for a single `ACTIVITY` / `APP_CLOSE` row. The legacy
+ * `PHONE_ACTIVITY` heartbeat is no longer sent by this app.
  *
  * Steps: a single request posts the last several calendar days into
  * `StepEvent` + `StepNight` (the server keeps the higher daily total).
@@ -63,6 +64,71 @@ class IngestPoster(
         }.toRequestBody(JSON)
 
         enqueue("$url/api/ingest/sleep", payload)
+    }
+
+    /**
+     * Replace phone-session markers in [replaceFrom, replaceTo] with [events].
+     * Runs synchronously — call from a background thread. Returns whether
+     * the server accepted the batch.
+     */
+    fun postPhoneSessions(
+        sessionId: String,
+        events: List<PhoneSessionMarker>,
+        replaceFrom: Instant,
+        replaceTo: Instant,
+    ): Boolean {
+        if (!configured()) return false
+
+        val toSend = if (events.size > MAX_PHONE_SESSION_EVENTS) {
+            Log.w(TAG, "truncating phone-session batch from ${events.size} to $MAX_PHONE_SESSION_EVENTS")
+            events.take(MAX_PHONE_SESSION_EVENTS)
+        } else {
+            events
+        }
+
+        val payload = buildString {
+            append('{')
+            append("\"username\":").append(jsonString(userName())).append(',')
+            append("\"sessionId\":\"").append(sessionId).append("\",")
+            append("\"replaceFrom\":\"").append(replaceFrom.toString()).append("\",")
+            append("\"replaceTo\":\"").append(replaceTo.toString()).append("\",")
+            append("\"events\":[")
+            toSend.forEachIndexed { index, marker ->
+                if (index > 0) append(',')
+                append('{')
+                append("\"eventType\":\"").append(marker.type.eventType()).append("\",")
+                append("\"eventTime\":\"").append(marker.at.toString()).append('"')
+                append('}')
+            }
+            append(']')
+            append('}')
+        }.toRequestBody(JSON)
+
+        val endpoint = "$url/api/ingest/sleep"
+        val req = Request.Builder()
+            .url(endpoint)
+            .header("Authorization", "Bearer $token")
+            .header("Content-Type", "application/json")
+            .post(payload)
+            .build()
+
+        return try {
+            client.newCall(req).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.w(
+                        TAG,
+                        "POST $endpoint ${response.code}: ${response.body?.string()?.take(200)}",
+                    )
+                    false
+                } else {
+                    Log.i(TAG, "posted ${toSend.size} phone-session marker(s)")
+                    true
+                }
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "POST $endpoint failed: ${e.message}")
+            false
+        }
     }
 
     fun postDailySteps(days: List<DaySteps>, sessionId: String) {
@@ -147,5 +213,12 @@ class IngestPoster(
 
         fun isConfigured(): Boolean =
             BuildConfig.APP_URL.isNotBlank() && BuildConfig.INGEST_TOKEN.isNotBlank()
+
+        private const val MAX_PHONE_SESSION_EVENTS = 500
     }
+}
+
+private fun PhoneSessionType.eventType(): String = when (this) {
+    PhoneSessionType.START -> "PHONE_SESSION_START"
+    PhoneSessionType.END -> "PHONE_SESSION_END"
 }

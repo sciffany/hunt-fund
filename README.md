@@ -224,20 +224,30 @@ Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" |
 
 ## Android
 
-Companion Android app in [`android/`](./android/). It runs a foreground
-service that POSTs one `PHONE_ACTIVITY` row to the hunt-fund ingest API
-(`/api/ingest/sleep`) every 2 minutes while the phone is unlocked with
-the screen on, only inside the local recording window (default 8pm–6am).
-That event type is kept distinct from the desktop tracker's `ACTIVITY`
-rows. Brief unlocks (checking the time, pocket wakes) that end before
-the next tick are ignored.
+Companion Android app in [`android/`](./android/). After the local
+recording window ends (default 6am), a foreground service queries
+Android UsageStats for that night's `[8pm, 6am]` window and POSTs
+`PHONE_SESSION_START` / `PHONE_SESSION_END` markers to `/api/ingest/sleep`.
+A session starts on the first unlock with the screen on at or after 8pm
+(lock-screen / ambient glances do not count). If the phone is still in
+use at 6am, the stop is recorded as 6am. The hunt-fund **refresh**
+button then pairs those markers, drops sessions shorter than 1 minute,
+and takes the latest end as last phone activity (desktop `ACTIVITY`
+rows still compete the same way).
 
-`ACTION_SCREEN_ON` / `ACTION_SCREEN_OFF` / `ACTION_USER_PRESENT` are
-still received so the in-app debug UI can show the service is alive;
-none of those broadcasts are posted. They are protected system intents,
-so a manifest-declared receiver never fires for them — the foreground
-service exists to keep the runtime receiver and the 2-minute heartbeat
-alive while the phone is idle.
+On first launch, tap **Start tracking**, accept the notification
+permission on Android 13+, and grant **Usage access** in system
+Settings (required to read yesterday's screen/unlock events). Optionally
+tap **Enable step counting**: the app prefers **Google Health Connect**
+(grant Steps + background read) so daily totals include watches, Fit,
+Samsung Health, and on-device steps. If Health Connect is missing, needs
+an update, or permission is denied, it falls back to the phone's
+hardware step counter (`ACTIVITY_RECOGNITION` + `TYPE_STEP_COUNTER`).
+The UI shows today's total and the active source; at local midnight
+(and whenever you tap **Send steps**) the last 7 Health Connect days
+are POSTed to `/api/ingest/steps`. **Send last night** re-posts the
+completed night's phone sessions. The app auto-restarts after reboot or
+a reinstall via a `BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` receiver.
 
 ### 1. Configure
 
@@ -262,19 +272,8 @@ cd android
 ./gradlew installDebug
 ```
 
-On first launch, tap **Start tracking** and accept the notification
-permission prompt on Android 13+ (needed for the ongoing foreground-
-service notification to show up; the service still runs either way).
-Optionally tap **Enable step counting**: the app prefers **Google
-Health Connect** (grant Steps + background read) so daily totals
-include watches, Fit, Samsung Health, and on-device steps. If Health
-Connect is missing, needs an update, or permission is denied, it falls
-back to the phone's hardware step counter (`ACTIVITY_RECOGNITION` +
-`TYPE_STEP_COUNTER`). The UI shows today's total and the active source;
-at local midnight (and whenever you tap **Send steps**) the last 7
-Health Connect days are POSTed to `/api/ingest/steps`. The app then
-auto-restarts after reboot or a reinstall via a `BOOT_COMPLETED` /
-`MY_PACKAGE_REPLACED` receiver.
+Then tap **Start tracking** (notification permission, Usage access, optional
+step counting) as described above.
 
 ### Security caveat
 
@@ -305,8 +304,11 @@ python sleep_tracker.py
 
 ## Querying who was up last night
 
-Raw events land in Neon's `SleepEvent` table. The hunt-fund app reads
-them; to inspect from SQL:
+Raw events land in Neon's `SleepEvent` table. Phone usage is stored as
+`PHONE_SESSION_START` / `PHONE_SESSION_END` pairs; last activity for a
+night is computed when you press refresh (drop sessions under 1 minute,
+unclosed sessions end at 6am). The hunt-fund app reads them; to inspect
+from SQL:
 
 ```sql
 select u.username, e."eventType", e."eventTime"

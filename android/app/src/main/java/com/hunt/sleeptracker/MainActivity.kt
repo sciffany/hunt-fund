@@ -82,8 +82,15 @@ class MainActivity : AppCompatActivity() {
 
         binding.startButton.setOnClickListener {
             requestNotificationPermissionIfNeeded()
+            requestUsageAccessIfNeeded()
             startTrackerService(this)
             refreshUi()
+        }
+        binding.sendLastNightButton.setOnClickListener {
+            sendLastNight()
+        }
+        binding.usageAccessText.setOnClickListener {
+            requestUsageAccessIfNeeded()
         }
         binding.enableStepsButton.setOnClickListener {
             enableStepCounting()
@@ -330,6 +337,12 @@ class MainActivity : AppCompatActivity() {
         binding.configWarning.visibility =
             if (configOk) View.GONE else View.VISIBLE
 
+        binding.usageAccessText.text = when {
+            !UsageAccess.isSupported() -> getString(R.string.usage_access_unsupported)
+            UsageAccess.hasPermission(this) -> getString(R.string.usage_access_granted)
+            else -> getString(R.string.usage_access_missing)
+        }
+
         val action = LastEvent.action
         val at = LastEvent.at
         binding.lastEventText.text = if (action != null && at != null) {
@@ -371,6 +384,30 @@ class MainActivity : AppCompatActivity() {
         if (running && stepsListener == null) attachStepsListener()
     }
 
+    private fun sendLastNight() {
+        if (!IngestPoster.isConfigured() || !UsageAccess.hasPermission(this)) {
+            Toast.makeText(this, R.string.last_night_send_failed, Toast.LENGTH_LONG).show()
+            if (!UsageAccess.hasPermission(this)) requestUsageAccessIfNeeded()
+            return
+        }
+        requestNotificationPermissionIfNeeded()
+        startTrackerService(this, sendLastNight = true)
+        Toast.makeText(this, R.string.last_night_sent, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun requestUsageAccessIfNeeded() {
+        if (!UsageAccess.isSupported()) return
+        if (UsageAccess.hasPermission(this)) return
+        AlertDialog.Builder(this)
+            .setTitle(R.string.usage_access_title)
+            .setMessage(R.string.usage_access_message)
+            .setNegativeButton(R.string.usage_access_cancel, null)
+            .setPositiveButton(R.string.usage_access_open) { _, _ ->
+                UsageAccess.openSettings(this)
+            }
+            .show()
+    }
+
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         val granted = ContextCompat.checkSelfPermission(
@@ -395,10 +432,16 @@ class MainActivity : AppCompatActivity() {
         private val LOCAL_FMT: DateTimeFormatter =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z")
 
-        fun startTrackerService(context: Context, enableSteps: Boolean = false) {
+        fun startTrackerService(
+            context: Context,
+            enableSteps: Boolean = false,
+            sendLastNight: Boolean = false,
+        ) {
             val intent = Intent(context, ScreenStateService::class.java)
-            if (enableSteps) {
-                intent.action = ScreenStateService.ACTION_ENABLE_STEPS
+            intent.action = when {
+                sendLastNight -> ScreenStateService.ACTION_SEND_LAST_NIGHT
+                enableSteps -> ScreenStateService.ACTION_ENABLE_STEPS
+                else -> null
             }
             ContextCompat.startForegroundService(context, intent)
         }

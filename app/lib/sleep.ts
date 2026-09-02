@@ -393,27 +393,67 @@ export function nightActivityWindow(
   };
 }
 
-export const LAST_ACTIVITY_EVENT_TYPES = [
+export const POINT_ACTIVITY_EVENT_TYPES = [
   "ACTIVITY",
   "PHONE_ACTIVITY",
   "APP_CLOSE",
 ] as const;
 
+export const PHONE_SESSION_EVENT_TYPES = [
+  "PHONE_SESSION_START",
+  "PHONE_SESSION_END",
+] as const;
+
+export const LAST_ACTIVITY_EVENT_TYPES = [
+  ...POINT_ACTIVITY_EVENT_TYPES,
+  ...PHONE_SESSION_EVENT_TYPES,
+] as const;
+
 export type LastActivityEventType = (typeof LAST_ACTIVITY_EVENT_TYPES)[number];
 
-function isLastActivityEventType(value: string): value is LastActivityEventType {
-  return (LAST_ACTIVITY_EVENT_TYPES as readonly string[]).includes(value);
+const MIN_PHONE_SESSION_MS = 60_000;
+
+function isPointActivityEventType(
+  value: string,
+): value is (typeof POINT_ACTIVITY_EVENT_TYPES)[number] {
+  return (POINT_ACTIVITY_EVENT_TYPES as readonly string[]).includes(value);
+}
+
+function isPhoneSessionEventType(
+  value: string,
+): value is (typeof PHONE_SESSION_EVENT_TYPES)[number] {
+  return (PHONE_SESSION_EVENT_TYPES as readonly string[]).includes(value);
 }
 
 /**
- * Latest gadget activity in [start, end). An `APP_CLOSE` as the last event
- * means the desktop tracker was stopped while the computer was still up, so
- * we can't tell when they actually stopped using it — treat that as still up
- * at the end of the window (6:00 AM). A `SYSTEM_SHUTDOWN` is not listed here:
- * shutting down the laptop is expected, and the last `ACTIVITY` timestamp
- * still stands.
+ * Latest gadget activity in the night window.
+ *
+ * Desktop: latest `ACTIVITY` / legacy `PHONE_ACTIVITY` in [start, end). An
+ * `APP_CLOSE` as the last of those means the desktop tracker was stopped
+ * while the computer was still up, so we can't tell when they actually
+ * stopped using it — treat that as still up at the end of the window
+ * (6:00 AM). `SYSTEM_SHUTDOWN` is ignored: shutting down the laptop is
+ * expected, and the last `ACTIVITY` timestamp still stands.
+ *
+ * Phone: pair `PHONE_SESSION_START` / `PHONE_SESSION_END` (ends at `end`
+ * are included so a synthesized 6am stop counts). Unmatched start → end
+ * at 6am. Unmatched end is ignored. Sessions shorter than 1 minute are
+ * dropped. Last phone use is the latest remaining session end.
  */
 export function lastActivityInWindow(
+  events: { eventType: string; eventTime: Date }[],
+  start: Date,
+  end: Date,
+): Date | null {
+  const pointLatest = latestPointActivity(events, start, end);
+  const phoneLatest = latestPhoneSessionEnd(events, start, end);
+
+  if (!pointLatest) return phoneLatest;
+  if (!phoneLatest) return pointLatest;
+  return pointLatest.getTime() >= phoneLatest.getTime() ? pointLatest : phoneLatest;
+}
+
+function latestPointActivity(
   events: { eventType: string; eventTime: Date }[],
   start: Date,
   end: Date,
@@ -423,7 +463,7 @@ export function lastActivityInWindow(
   const endMs = end.getTime();
 
   for (const event of events) {
-    if (!isLastActivityEventType(event.eventType)) continue;
+    if (!isPointActivityEventType(event.eventType)) continue;
     const time = event.eventTime.getTime();
     if (time < startMs || time >= endMs) continue;
     if (!latest || time > latest.eventTime.getTime()) latest = event;
@@ -432,4 +472,43 @@ export function lastActivityInWindow(
   if (!latest) return null;
   if (latest.eventType === "APP_CLOSE") return end;
   return latest.eventTime;
+}
+
+function latestPhoneSessionEnd(
+  events: { eventType: string; eventTime: Date }[],
+  start: Date,
+  end: Date,
+): Date | null {
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  const sessionEvents = events
+    .filter((event) => {
+      if (!isPhoneSessionEventType(event.eventType)) return false;
+      const time = event.eventTime.getTime();
+      return time >= startMs && time <= endMs;
+    })
+    .sort((a, b) => a.eventTime.getTime() - b.eventTime.getTime());
+
+  const intervals: { start: number; end: number }[] = [];
+  let openStart: number | null = null;
+  for (const event of sessionEvents) {
+    const time = event.eventTime.getTime();
+    if (event.eventType === "PHONE_SESSION_START") {
+      if (openStart === null) openStart = time;
+      continue;
+    }
+    if (openStart === null) continue;
+    intervals.push({ start: openStart, end: time });
+    openStart = null;
+  }
+  if (openStart !== null) {
+    intervals.push({ start: openStart, end: endMs });
+  }
+
+  let latest: number | null = null;
+  for (const interval of intervals) {
+    if (interval.end - interval.start < MIN_PHONE_SESSION_MS) continue;
+    if (latest === null || interval.end > latest) latest = interval.end;
+  }
+  return latest === null ? null : new Date(latest);
 }

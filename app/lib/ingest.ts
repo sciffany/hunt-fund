@@ -8,11 +8,15 @@ const SLEEP_EVENT_TYPES: Record<string, SleepEventType> = {
   activity: "ACTIVITY",
   app_close: "APP_CLOSE",
   phone_activity: "PHONE_ACTIVITY",
+  phone_session_start: "PHONE_SESSION_START",
+  phone_session_end: "PHONE_SESSION_END",
   system_shutdown: "SYSTEM_SHUTDOWN",
   APP_START: "APP_START",
   ACTIVITY: "ACTIVITY",
   APP_CLOSE: "APP_CLOSE",
   PHONE_ACTIVITY: "PHONE_ACTIVITY",
+  PHONE_SESSION_START: "PHONE_SESSION_START",
+  PHONE_SESSION_END: "PHONE_SESSION_END",
   SYSTEM_SHUTDOWN: "SYSTEM_SHUTDOWN",
 };
 

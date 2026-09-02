@@ -1,11 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">SleepTracker</string>
-    <string name="notification_channel_name">Screen state tracker</string>
-    <string name="notification_channel_desc">Keeps the screen-state listener alive.</string>
+    <string name="notification_channel_name">Sleep tracker</string>
+    <string name="notification_channel_desc">Keeps step sync and the daily phone-usage flush alive.</string>
     <string name="notification_title">SleepTracker running</string>
-    <string name="notification_text">Logging phone activity and screen on/off.</string>
+    <string name="notification_text">Logging steps and last night\'s phone sessions.</string>
     <string name="btn_start">Start tracking</string>
+    <string name="btn_send_last_night">Send last night</string>
+    <string name="usage_access_granted">Usage access: granted</string>
+    <string name="usage_access_missing">Usage access: not granted. Open Settings and enable this app so last night\'s unlock sessions can be read.</string>
+    <string name="usage_access_unsupported">Usage access needs Android 10 or later.</string>
+    <string name="usage_access_title">Allow usage access?</string>
+    <string name="usage_access_message">SleepTracker reads yesterday\'s screen on/off and unlock events once a day. Grant Usage access in the next screen, then return here.</string>
+    <string name="usage_access_open">Open Settings</string>
+    <string name="usage_access_cancel">Not now</string>
+    <string name="last_night_sent">Sent last night\'s phone sessions.</string>
+    <string name="last_night_send_failed">Could not send last night — grant Usage access and check app.url / ingest.token.</string>
     <string name="btn_enable_steps">Enable step counting</string>
     <string name="btn_steps_enabled">Phone steps on</string>
     <string name="btn_steps_hc_enabled">Health Connect steps on</string>

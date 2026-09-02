@@ -5,10 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.BroadcastReceiver
-import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
@@ -26,19 +23,13 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 
 /**
- * Foreground service that owns a runtime-registered [BroadcastReceiver] for
- * SCREEN_ON / SCREEN_OFF / USER_PRESENT and a [PhoneActivityPoller].
+ * Foreground service that flushes last night's phone-session markers from
+ * UsageStats and syncs daily steps.
  *
- * Broadcasts are received only so the in-app [LastEvent] debug UI can show
- * that the service is alive. None of them are posted as `phone_activity`:
- * screen-on/off fire from tap-to-wake, ambient display, and timeouts.
- * [PhoneActivityPoller] posts a heartbeat every 2 minutes while the phone
- * is unlocked with the screen on, and only inside the recording window
- * (default 8pm–6am local).
- *
- * Those three broadcasts are all "protected" — a manifest-declared receiver
- * never fires for them, so the service exists purely to keep our runtime
- * receiver registered while the phone is idle.
+ * After the local recording window ends (default 6am), [UsageStatsNightReader]
+ * queries unlocked+interactive sessions in [8pm, 6am] and POSTs
+ * `PHONE_SESSION_START` / `PHONE_SESSION_END` rows. Brief sessions are
+ * stored as-is; the hunt-fund refresh button drops those under 1 minute.
  *
  * Steps prefer Google Health Connect ([HealthConnectStepsReader] aggregate of
  * [androidx.health.connect.client.records.StepsRecord]). When HC is
@@ -54,31 +45,21 @@ class ScreenStateService : Service() {
     private lateinit var poster: IngestPoster
     private lateinit var dailySteps: DailySteps
     private lateinit var healthConnect: HealthConnectStepsReader
+    private lateinit var usageReader: UsageStatsNightReader
 
-    // Single-thread scheduler serves the phone-activity heartbeat and the
+    // Single-thread scheduler serves the phone-session flush and the
     // step-sync ticks; serialization is fine since none of this is
     // latency-critical.
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
-    private var poller: PhoneActivityPoller? = null
     private var midnightTick: ScheduledFuture<*>? = null
     private var stepTracker: StepCounterTracker? = null
     private val mainHandler = Handler(Looper.getMainLooper())
-
-    private val receiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val action = intent.action ?: return
-            val ts = Instant.now()
-            Log.d(TAG, "received $action at $ts")
-            LastEvent.update(action, ts)
-            // No POST from broadcasts — PhoneActivityPoller owns
-            // PHONE_ACTIVITY rows on a 2-minute unlock heartbeat.
-        }
-    }
 
     override fun onCreate() {
         super.onCreate()
         sessionId = UUID.randomUUID().toString()
         poster = IngestPoster(this)
+        usageReader = UsageStatsNightReader(this)
         healthConnect = HealthConnectStepsReader(this)
         dailySteps = DailySteps(this) { day, steps ->
             // Callback may arrive on the sensor or scheduler thread.
@@ -96,34 +77,24 @@ class ScreenStateService : Service() {
         // uses dataSync alone.
         promoteForeground(includeHealth = StepCounterTracker.hasPermission(this))
 
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_SCREEN_ON)
-            addAction(Intent.ACTION_SCREEN_OFF)
-            addAction(Intent.ACTION_USER_PRESENT)
-        }
-        // Screen state broadcasts are system-only, so no exported flag needed
-        // on older APIs. Android 14 requires an explicit flag when registering
-        // any receiver from a running app process.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(receiver, filter)
-        }
-
-        poller = PhoneActivityPoller(this, poster, sessionId, scheduler).also { it.start() }
-
         // Prefer HC; fall back to pedometer. Periodic tick refreshes HC
         // aggregates, catches midnight rollover, retries permission, and
-        // uploads to ingest when an hour has passed.
-        scheduler.execute { syncSteps() }
+        // uploads to ingest when an hour has passed. Phone-session flush
+        // piggybacks on the same tick (cheap until a completed night is pending).
+        scheduler.execute { syncAll() }
         midnightTick = scheduler.scheduleWithFixedDelay(
-            { syncSteps() },
+            { syncAll() },
             STEP_POLL_SECONDS,
             STEP_POLL_SECONDS,
             TimeUnit.SECONDS,
         )
 
         Log.i(TAG, "ScreenStateService started, session=$sessionId")
+    }
+
+    private fun syncAll() {
+        flushPhoneSessions()
+        syncSteps()
     }
 
     /**
@@ -150,6 +121,67 @@ class ScreenStateService : Service() {
         mainHandler.post { startStepTrackingIfPermitted() }
         maybePushSteps()
     }
+
+    /**
+     * POST UsageStats sessions for any completed night not yet flushed,
+     * oldest first, up to [PHONE_CATCHUP_NIGHTS].
+     */
+    private fun flushPhoneSessions(forceLastNight: Boolean = false) {
+        if (!UsageAccess.isSupported()) {
+            Log.w(TAG, "phone sessions need API 29+")
+            return
+        }
+        if (!UsageAccess.hasPermission(this)) {
+            Log.d(TAG, "skip phone sessions: no usage access")
+            return
+        }
+        if (!IngestPoster.isConfigured()) return
+
+        val lastCompleted = RecordingWindow.lastCompletedNight()
+        if (forceLastNight) {
+            if (postNight(lastCompleted)) {
+                markPhoneNightPosted(lastCompleted)
+            }
+            return
+        }
+
+        val posted = lastPostedPhoneNight()
+        val oldest = lastCompleted.minusDays(PHONE_CATCHUP_NIGHTS - 1L)
+        var night = when {
+            posted == null -> oldest
+            posted.plusDays(1).isBefore(oldest) -> oldest
+            else -> posted.plusDays(1)
+        }
+        while (!night.isAfter(lastCompleted)) {
+            if (!postNight(night)) return
+            markPhoneNightPosted(night)
+            night = night.plusDays(1)
+        }
+    }
+
+    private fun postNight(night: LocalDate): Boolean {
+        val markers = usageReader.markersForNight(night) ?: return false
+        val (start, end) = RecordingWindow.boundsForNight(night)
+        val ok = poster.postPhoneSessions(sessionId, markers, start, end)
+        if (ok) {
+            LastEvent.update(PHONE_SESSIONS_ACTION, Instant.now())
+            Log.i(TAG, "flushed ${markers.size} marker(s) for night $night")
+        }
+        return ok
+    }
+
+    private fun lastPostedPhoneNight(): LocalDate? {
+        val raw = phonePrefs().getString(KEY_LAST_POSTED_NIGHT, null) ?: return null
+        return runCatching { LocalDate.parse(raw) }.getOrNull()
+    }
+
+    private fun markPhoneNightPosted(night: LocalDate) {
+        val current = lastPostedPhoneNight()
+        if (current != null && !night.isAfter(current)) return
+        phonePrefs().edit().putString(KEY_LAST_POSTED_NIGHT, night.toString()).apply()
+    }
+
+    private fun phonePrefs() = getSharedPreferences(PHONE_PREFS, MODE_PRIVATE)
 
     /**
      * Upload current totals when [STEP_PUSH_INTERVAL_MS] has elapsed since
@@ -268,22 +300,17 @@ class ScreenStateService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // START_STICKY so Android brings the service back if it's killed for
-        // memory; the receiver gets re-registered in the fresh onCreate().
-        if (intent?.action == ACTION_ENABLE_STEPS) {
-            scheduler.execute { syncSteps() }
+        // memory; onCreate re-runs the periodic flush.
+        when (intent?.action) {
+            ACTION_ENABLE_STEPS -> scheduler.execute { syncSteps() }
+            ACTION_SEND_LAST_NIGHT -> scheduler.execute { flushPhoneSessions(forceLastNight = true) }
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
-        try {
-            unregisterReceiver(receiver)
-        } catch (_: IllegalArgumentException) {
-            // already unregistered
-        }
         midnightTick?.cancel(false)
         midnightTick = null
-        poller?.stop()
         stopSensorTracker()
         stepsTracking = false
         if (sharedDailySteps === dailySteps) sharedDailySteps = null
@@ -338,7 +365,12 @@ class ScreenStateService : Service() {
         private const val STEP_PUSH_INTERVAL_MS = 60L * 60L * 1000L
         private const val STEP_PUSH_PREFS = "step_ingest"
         private const val KEY_LAST_STEP_PUSH_MS = "last_push_ms"
+        private const val PHONE_PREFS = "phone_usage_ingest"
+        private const val KEY_LAST_POSTED_NIGHT = "last_posted_night"
+        private const val PHONE_CATCHUP_NIGHTS = 7L
         const val ACTION_ENABLE_STEPS = "com.hunt.sleeptracker.ENABLE_STEPS"
+        const val ACTION_SEND_LAST_NIGHT = "com.hunt.sleeptracker.SEND_LAST_NIGHT"
+        const val PHONE_SESSIONS_ACTION = "com.hunt.sleeptracker.PHONE_SESSIONS"
 
         /** Live counter while the service is up; null when stopped. */
         @Volatile

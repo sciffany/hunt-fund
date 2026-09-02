@@ -408,7 +408,7 @@ export async function refreshSleepNight(
     where: {
       userId: { in: windows.map((window) => window.userId) },
       eventType: { in: [...LAST_ACTIVITY_EVENT_TYPES] },
-      eventTime: { gte: minStart, lt: maxEnd },
+      eventTime: { gte: minStart, lte: maxEnd },
     },
     select: { userId: true, eventType: true, eventTime: true },
     orderBy: { eventTime: "desc" },

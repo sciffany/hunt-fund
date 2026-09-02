@@ -45,7 +45,9 @@ This is separate from [`../dashboard`](../dashboard): its own Neon database, no 
    Phone and desktop trackers POST to `/api/ingest/sleep` and
    `/api/ingest/steps` with `Authorization: Bearer $INGEST_TOKEN`. The
    username in the body must match a hunt-fund account. Sleep event types
-   are stored as Prisma enums (`PHONE_ACTIVITY`, `ACTIVITY`, …).
+   are stored as Prisma enums (`PHONE_SESSION_START`, `PHONE_SESSION_END`,
+   `PHONE_ACTIVITY`, `ACTIVITY`, …). Phone last-activity is computed when
+   you refresh a night: sessions under 1 minute are dropped.
 
    In `next dev` only, the sign-in page also offers **Dev Owner** and **Dev
    Member**. Those create two local users and a sample group (`Dev Sleep Club`)

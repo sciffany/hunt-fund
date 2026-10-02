@@ -15,7 +15,10 @@ import {
   EVENT_RETENTION_DAYS,
   LAST_ACTIVITY_EVENT_TYPES,
   REFRESH_WINDOW_DAYS,
+  decidingEvent,
+  decidingEventNote,
   formatDateOnly,
+  formatTimeInZone,
   isNightRefreshable,
   isValidTimeZone,
   lastActivityInWindow,
@@ -366,8 +369,19 @@ export async function refreshSleepNight(
     return { ok: false, error: "You aren’t in this group." };
   }
 
+  const updated = await recomputeGroupSleepNight(groupId, night, nightKey);
+  revalidateGroup(groupId);
+  return { ok: true, night: nightKey, updated };
+}
+
+async function recomputeGroupSleepNight(
+  groupId: string,
+  night: Date,
+  nightKey: string,
+  userId?: string,
+): Promise<number> {
   const members = await prisma.groupMember.findMany({
-    where: { groupId },
+    where: { groupId, ...(userId ? { userId } : {}) },
     include: {
       sleepSchedules: {
         select: { effectiveFrom: true, timezone: true },
@@ -397,9 +411,7 @@ export async function refreshSleepNight(
     return { userId: member.userId, start, end };
   });
 
-  if (windows.length === 0) {
-    return { ok: true, night: nightKey, updated: 0 };
-  }
+  if (windows.length === 0) return 0;
 
   const minStart = new Date(Math.min(...windows.map((window) => window.start.getTime())));
   const maxEnd = new Date(Math.max(...windows.map((window) => window.end.getTime())));
@@ -444,8 +456,7 @@ export async function refreshSleepNight(
     ),
   );
 
-  revalidateGroup(groupId);
-  return { ok: true, night: nightKey, updated: rows.length };
+  return rows.length;
 }
 
 export type PruneSleepEventsResult =
@@ -479,6 +490,222 @@ export async function pruneOldSleepEvents(
     },
   });
 
+  revalidateGroup(groupId);
+  return { ok: true, deleted: result.count };
+}
+
+const SLEEP_EVENT_LABELS: Record<string, string> = {
+  ACTIVITY: "Desktop activity",
+  PHONE_ACTIVITY: "Phone activity",
+  APP_CLOSE: "Desktop tracker stopped",
+  PHONE_SESSION_START: "Phone session started",
+  PHONE_SESSION_END: "Phone session ended",
+  APP_START: "Tracker started",
+  SYSTEM_SHUTDOWN: "Computer shut down",
+};
+
+function formatEventStamp(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  }).format(date);
+}
+
+async function activityWindowForMember(
+  groupMemberId: string,
+  night: Date,
+  nightKey: string,
+) {
+  const member = await prisma.groupMember.findUnique({
+    where: { id: groupMemberId },
+    include: {
+      sleepSchedules: {
+        select: { effectiveFrom: true, timezone: true },
+        orderBy: { effectiveFrom: "asc" },
+      },
+      sleepOverrides: {
+        where: { date: night },
+        select: { date: true, timezone: true },
+      },
+    },
+  });
+  if (!member) return null;
+
+  const schedules = member.sleepSchedules.map((schedule) => ({
+    effectiveFrom: formatDateOnly(schedule.effectiveFrom),
+    timezone: schedule.timezone,
+  }));
+  const overrides = member.sleepOverrides.map((override) => ({
+    date: formatDateOnly(override.date),
+    timezone: override.timezone,
+  }));
+  const rawTimezone = timezoneForNight(schedules, overrides, nightKey);
+  const timezone = isValidTimeZone(rawTimezone) ? rawTimezone : DEFAULT_TIMEZONE;
+  const { start, end } = nightActivityWindow(nightKey, timezone);
+  return { userId: member.userId, groupId: member.groupId, timezone, start, end };
+}
+
+export type SleepNightEventView = {
+  id: string;
+  label: string;
+  timeLabel: string;
+  decides: boolean;
+  note: string | null;
+};
+
+export type SleepNightEventsResult =
+  | {
+      ok: true;
+      canDelete: boolean;
+      countedAtLabel: string | null;
+      events: SleepNightEventView[];
+    }
+  | { ok: false; error: string };
+
+export async function listSleepNightEvents(
+  groupId: string,
+  groupMemberId: string,
+  nightRaw: string,
+): Promise<SleepNightEventsResult> {
+  const user = await requireOnboardedUser();
+  const night = parseDateOnly(nightRaw);
+  if (!groupId || !groupMemberId || !night) {
+    return { ok: false, error: "Pick a valid night." };
+  }
+
+  const viewer = await prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId, userId: user.id } },
+    include: { group: { select: { ownerId: true } } },
+  });
+  if (!viewer) return { ok: false, error: "You aren’t in this group." };
+
+  const nightKey = formatDateOnly(night);
+  const window = await activityWindowForMember(groupMemberId, night, nightKey);
+  if (!window || window.groupId !== groupId) {
+    return { ok: false, error: "That member isn’t in this group." };
+  }
+
+  const events = await prisma.sleepEvent.findMany({
+    where: {
+      userId: window.userId,
+      eventType: { in: [...LAST_ACTIVITY_EVENT_TYPES] },
+      eventTime: { gte: window.start, lte: window.end },
+    },
+    select: { id: true, eventType: true, eventTime: true },
+    orderBy: { eventTime: "desc" },
+  });
+
+  const decision = decidingEvent(events, window.start, window.end);
+  const note = decision
+    ? decidingEventNote(decision.event.eventType, decision.at, window.end)
+    : null;
+
+  return {
+    ok: true,
+    canDelete: viewer.group.ownerId === user.id,
+    countedAtLabel: decision
+      ? formatTimeInZone(decision.at, window.timezone)
+      : null,
+    events: events.map((event) => ({
+      id: event.id,
+      label: SLEEP_EVENT_LABELS[event.eventType] ?? event.eventType,
+      timeLabel: formatEventStamp(event.eventTime, window.timezone),
+      decides: decision?.event.id === event.id,
+      note: decision?.event.id === event.id ? note : null,
+    })),
+  };
+}
+
+export type DeleteSleepEventResult = { ok: true } | { ok: false; error: string };
+
+export async function deleteSleepEvent(
+  groupId: string,
+  eventId: string,
+  nightRaw: string,
+): Promise<DeleteSleepEventResult> {
+  const user = await requireOnboardedUser();
+  const group = await requireOwnedGroup(user.id, groupId);
+  if (!group) return { ok: false, error: "You can’t edit this group." };
+
+  const night = parseDateOnly(nightRaw);
+  if (!eventId || !night) return { ok: false, error: "That event wasn’t found." };
+
+  const event = await prisma.sleepEvent.findUnique({ where: { id: eventId } });
+  if (!event) return { ok: false, error: "That event wasn’t found." };
+
+  const member = await prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId, userId: event.userId } },
+  });
+  if (!member) return { ok: false, error: "That event isn’t in this group." };
+
+  await prisma.sleepEvent.delete({ where: { id: eventId } });
+  await recomputeGroupSleepNight(
+    groupId,
+    night,
+    formatDateOnly(night),
+    event.userId,
+  );
+  revalidateGroup(groupId);
+  return { ok: true };
+}
+
+export type DeleteSleepEventsResult =
+  | { ok: true; deleted: number }
+  | { ok: false; error: string };
+
+export async function deleteSleepEvents(
+  groupId: string,
+  eventIds: string[],
+  nightRaw: string,
+): Promise<DeleteSleepEventsResult> {
+  const user = await requireOnboardedUser();
+  const group = await requireOwnedGroup(user.id, groupId);
+  if (!group) return { ok: false, error: "You can’t edit this group." };
+
+  const night = parseDateOnly(nightRaw);
+  const ids = [
+    ...new Set(
+      (Array.isArray(eventIds) ? eventIds : []).filter(
+        (id) => typeof id === "string" && id.length > 0,
+      ),
+    ),
+  ];
+  if (!night || ids.length === 0) {
+    return { ok: false, error: "Select at least one event." };
+  }
+  if (ids.length > 5000) {
+    return { ok: false, error: "Select 5,000 events or fewer at a time." };
+  }
+
+  const events = await prisma.sleepEvent.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, userId: true },
+  });
+  if (events.length !== ids.length) {
+    return { ok: false, error: "Some of those events weren’t found." };
+  }
+
+  const userIds = [...new Set(events.map((event) => event.userId))];
+  const members = await prisma.groupMember.findMany({
+    where: { groupId, userId: { in: userIds } },
+    select: { userId: true },
+  });
+  if (members.length !== userIds.length) {
+    return { ok: false, error: "Some of those events aren’t in this group." };
+  }
+
+  const result = await prisma.sleepEvent.deleteMany({
+    where: { id: { in: ids } },
+  });
+  const nightKey = formatDateOnly(night);
+  for (const userId of userIds) {
+    await recomputeGroupSleepNight(groupId, night, nightKey, userId);
+  }
   revalidateGroup(groupId);
   return { ok: true, deleted: result.count };
 }

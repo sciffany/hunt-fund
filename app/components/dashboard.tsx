@@ -78,14 +78,16 @@ export function DashboardMetricCell({
   value,
   flagged,
   penaltyLabel,
+  className = "",
 }: {
   value: string | null;
   flagged: boolean;
   penaltyLabel: string | null;
+  className?: string;
 }) {
   return (
     <div
-      className={`flex h-14 items-center justify-end overflow-hidden px-3 ${flagged ? "bg-rose-50" : ""}`}
+      className={`flex h-14 items-center justify-end overflow-hidden px-3 ${flagged ? "bg-rose-50" : ""} ${className}`}
     >
       {value === null ? (
         <span className="text-neutral-300">—</span>

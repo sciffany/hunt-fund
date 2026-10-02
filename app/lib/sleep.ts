@@ -425,6 +425,28 @@ function isPhoneSessionEventType(
   return (PHONE_SESSION_EVENT_TYPES as readonly string[]).includes(value);
 }
 
+type DecidingActivity<T> = { event: T; at: Date };
+
+/**
+ * The event that sets latest activity, and the timestamp it counts as.
+ * Same rules as {@link lastActivityInWindow}. When desktop and phone tie,
+ * the desktop event wins.
+ */
+export function decidingEvent<T extends { eventType: string; eventTime: Date }>(
+  events: T[],
+  start: Date,
+  end: Date,
+): DecidingActivity<T> | null {
+  const pointLatest = latestPointActivity(events, start, end);
+  const phoneLatest = latestPhoneSessionEnd(events, start, end);
+
+  if (!pointLatest) return phoneLatest;
+  if (!phoneLatest) return pointLatest;
+  return pointLatest.at.getTime() >= phoneLatest.at.getTime()
+    ? pointLatest
+    : phoneLatest;
+}
+
 /**
  * Latest gadget activity in the night window.
  *
@@ -445,20 +467,30 @@ export function lastActivityInWindow(
   start: Date,
   end: Date,
 ): Date | null {
-  const pointLatest = latestPointActivity(events, start, end);
-  const phoneLatest = latestPhoneSessionEnd(events, start, end);
-
-  if (!pointLatest) return phoneLatest;
-  if (!phoneLatest) return pointLatest;
-  return pointLatest.getTime() >= phoneLatest.getTime() ? pointLatest : phoneLatest;
+  return decidingEvent(events, start, end)?.at ?? null;
 }
 
-function latestPointActivity(
-  events: { eventType: string; eventTime: Date }[],
+/** Why a deciding event's counted time differs from its own timestamp. */
+export function decidingEventNote(
+  eventType: string,
+  at: Date,
+  end: Date,
+): string | null {
+  if (eventType === "APP_CLOSE") {
+    return "Tracker stopped with the computer still on, so this counts as 6:00 AM.";
+  }
+  if (eventType === "PHONE_SESSION_START" && at.getTime() === end.getTime()) {
+    return "Phone session was still open, so this counts as 6:00 AM.";
+  }
+  return null;
+}
+
+function latestPointActivity<T extends { eventType: string; eventTime: Date }>(
+  events: T[],
   start: Date,
   end: Date,
-): Date | null {
-  let latest: { eventType: string; eventTime: Date } | null = null;
+): DecidingActivity<T> | null {
+  let latest: T | null = null;
   const startMs = start.getTime();
   const endMs = end.getTime();
 
@@ -470,15 +502,15 @@ function latestPointActivity(
   }
 
   if (!latest) return null;
-  if (latest.eventType === "APP_CLOSE") return end;
-  return latest.eventTime;
+  if (latest.eventType === "APP_CLOSE") return { event: latest, at: end };
+  return { event: latest, at: latest.eventTime };
 }
 
-function latestPhoneSessionEnd(
-  events: { eventType: string; eventTime: Date }[],
+function latestPhoneSessionEnd<T extends { eventType: string; eventTime: Date }>(
+  events: T[],
   start: Date,
   end: Date,
-): Date | null {
+): DecidingActivity<T> | null {
   const startMs = start.getTime();
   const endMs = end.getTime();
   const sessionEvents = events
@@ -489,26 +521,28 @@ function latestPhoneSessionEnd(
     })
     .sort((a, b) => a.eventTime.getTime() - b.eventTime.getTime());
 
-  const intervals: { start: number; end: number }[] = [];
-  let openStart: number | null = null;
+  const intervals: { event: T; start: number; end: number }[] = [];
+  let openStart: { event: T; time: number } | null = null;
   for (const event of sessionEvents) {
     const time = event.eventTime.getTime();
     if (event.eventType === "PHONE_SESSION_START") {
-      if (openStart === null) openStart = time;
+      if (openStart === null) openStart = { event, time };
       continue;
     }
     if (openStart === null) continue;
-    intervals.push({ start: openStart, end: time });
+    intervals.push({ event, start: openStart.time, end: time });
     openStart = null;
   }
   if (openStart !== null) {
-    intervals.push({ start: openStart, end: endMs });
+    intervals.push({ event: openStart.event, start: openStart.time, end: endMs });
   }
 
-  let latest: number | null = null;
+  let latest: { event: T; end: number } | null = null;
   for (const interval of intervals) {
     if (interval.end - interval.start < MIN_PHONE_SESSION_MS) continue;
-    if (latest === null || interval.end > latest) latest = interval.end;
+    if (latest === null || interval.end > latest.end) {
+      latest = { event: interval.event, end: interval.end };
+    }
   }
-  return latest === null ? null : new Date(latest);
+  return latest === null ? null : { event: latest.event, at: new Date(latest.end) };
 }

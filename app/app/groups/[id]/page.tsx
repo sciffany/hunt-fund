@@ -33,12 +33,92 @@ import {
   bedtimeInstant,
   defaultSleepTimes,
   formatDateOnly,
+  formatHalfHoursPast8pm,
   formatRoundedLastActivity,
   nightOverdue,
   parseDateOnly,
   parseSleepTimes,
   todayInTimeZone,
 } from "@/lib/sleep";
+
+function sharedDateNotes(
+  byDate: Map<string, { name: string; text: string }[]>,
+  memberCount: number,
+): Record<string, string[]> {
+  const notes: Record<string, string[]> = {};
+  for (const [date, items] of byDate) {
+    if (items.length === 0) continue;
+    const texts = new Set(items.map((item) => item.text));
+    if (texts.size === 1 && (memberCount <= 1 || items.length === memberCount)) {
+      notes[date] = [items[0].text];
+      continue;
+    }
+    notes[date] = items.map((item) =>
+      memberCount <= 1 ? item.text : `${item.name} · ${item.text}`,
+    );
+  }
+  return notes;
+}
+
+function sleepDateNotes(
+  members: {
+    user: Parameters<typeof displayNameOf>[0];
+    sleepOverrides: {
+      date: Date;
+      halfHoursPast8pm: number;
+      note: string | null;
+    }[];
+  }[],
+  dates: string[],
+): Record<string, string[]> {
+  const visible = new Set(dates);
+  const byDate = new Map<string, { name: string; text: string }[]>();
+  for (const member of members) {
+    const name = displayNameOf(member.user);
+    for (const override of member.sleepOverrides) {
+      const date = formatDateOnly(override.date);
+      if (!visible.has(date)) continue;
+      const bedtime = formatHalfHoursPast8pm(override.halfHoursPast8pm);
+      const note = override.note?.trim();
+      const text = note ? `${note} · ${bedtime}` : `Override · ${bedtime}`;
+      const list = byDate.get(date) ?? [];
+      list.push({ name, text });
+      byDate.set(date, list);
+    }
+  }
+  return sharedDateNotes(byDate, members.length);
+}
+
+function stepTargetDateNotes(
+  members: {
+    user: Parameters<typeof displayNameOf>[0];
+    stepTargets: { effectiveFrom: Date; targetSteps: number }[];
+  }[],
+  dates: string[],
+): Record<string, string[]> {
+  const visible = new Set(dates);
+  const byDate = new Map<string, { name: string; text: string }[]>();
+  for (const member of members) {
+    const name = displayNameOf(member.user);
+    const targets = [...member.stepTargets].sort((a, b) =>
+      formatDateOnly(a.effectiveFrom).localeCompare(formatDateOnly(b.effectiveFrom)),
+    );
+    let previousSteps: number | null = null;
+    for (const target of targets) {
+      const date = formatDateOnly(target.effectiveFrom);
+      const changed =
+        previousSteps !== null && target.targetSteps !== previousSteps;
+      if (changed && visible.has(date)) {
+        const text = `Target ${target.targetSteps.toLocaleString("en-US")}`;
+        const list = byDate.get(date) ?? [];
+        list.push({ name, text });
+        byDate.set(date, list);
+      }
+      previousSteps = target.targetSteps;
+    }
+  }
+  return sharedDateNotes(byDate, members.length);
+}
 
 export const metadata: Metadata = {
   title: "Group",
@@ -95,7 +175,12 @@ export default async function GroupPage({
             orderBy: { effectiveFrom: "asc" },
           },
           sleepOverrides: {
-            select: { date: true, timezone: true, halfHoursPast8pm: true },
+            select: {
+              date: true,
+              timezone: true,
+              halfHoursPast8pm: true,
+              note: true,
+            },
           },
           sleepPenalties: {
             select: {
@@ -185,6 +270,7 @@ export default async function GroupPage({
           groupId={group.id}
           month={month}
           today={todayInTimeZone(DEFAULT_TIMEZONE)}
+          dateNotes={sleepDateNotes(group.members, dates)}
           members={group.members.map((member) => {
           const schedules = member.sleepSchedules.map((schedule) => ({
             effectiveFrom: formatDateOnly(schedule.effectiveFrom),
@@ -265,6 +351,7 @@ export default async function GroupPage({
         <GroupMonthStepsDashboard
           month={month}
           today={todayInTimeZone(DEFAULT_TIMEZONE)}
+          dateNotes={stepTargetDateNotes(group.members, dates)}
           members={group.members.map((member) => {
             const targets = member.stepTargets.map((target) => ({
               effectiveFrom: formatDateOnly(target.effectiveFrom),

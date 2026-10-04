@@ -87,7 +87,7 @@ export function DashboardMetricCell({
 }) {
   return (
     <div
-      className={`flex h-14 items-center justify-end overflow-hidden px-3 ${flagged ? "bg-rose-50" : ""} ${className}`}
+      className={`flex h-full min-h-14 items-center justify-end overflow-hidden px-3 ${flagged ? "bg-rose-50" : ""} ${className}`}
     >
       {value === null ? (
         <span className="text-neutral-300">—</span>
@@ -120,6 +120,7 @@ export function DashboardMonthTable({
   members,
   today,
   dateAccessory,
+  dateNotes,
   renderCell,
   footerValues,
 }: {
@@ -127,21 +128,24 @@ export function DashboardMonthTable({
   members: { id: string; displayName: string }[];
   today: string;
   dateAccessory?: (date: string) => ReactNode;
+  dateNotes?: Record<string, string[]>;
   renderCell: (memberId: string, date: string) => ReactNode;
   footerValues: string[];
 }) {
   const dates = datesInMonth(month);
+  const hasDateNotes = dates.some((date) => (dateNotes?.[date]?.length ?? 0) > 0);
+  const dateColumnWidth = hasDateNotes ? "14rem" : "8rem";
 
   return (
     <div className="overflow-x-auto">
       <table
         className="w-full table-fixed border-collapse text-sm"
         style={{
-          minWidth: `calc(8rem + ${Math.max(members.length, 1) * 9}rem)`,
+          minWidth: `calc(${dateColumnWidth} + ${Math.max(members.length, 1) * 9}rem)`,
         }}
       >
         <colgroup>
-          <col className="w-32" />
+          <col style={{ width: dateColumnWidth }} />
           {members.map((member) => (
             <col key={member.id} />
           ))}
@@ -170,28 +174,50 @@ export function DashboardMonthTable({
           {dates.map((date) => {
             const isToday = date === today;
             const surface = rowSurfaceClass(date);
+            const notes = dateNotes?.[date] ?? [];
 
             return (
               <tr key={date} className={`border-t border-neutral-200 ${surface}`}>
                 <th
                   scope="row"
-                  className={`sticky left-0 z-10 h-14 px-3 text-left font-medium text-neutral-700 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] ${surface}`}
+                  className={`sticky left-0 z-10 px-3 text-left font-medium text-neutral-700 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] ${surface}`}
                 >
-                  <div className="flex h-full items-center justify-between gap-1">
-                    <span className="flex items-baseline gap-1.5">
-                      <span className="inline-block w-6 text-right tabular-nums">
-                        {dayOfMonth(date)}
+                  <div
+                    className={`flex flex-col justify-center ${
+                      notes.length > 0 ? "min-h-14 py-1.5" : "h-14"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="flex items-baseline gap-1.5">
+                        <span className="inline-block w-6 text-right tabular-nums">
+                          {dayOfMonth(date)}
+                        </span>
+                        <span className="text-xs font-normal text-neutral-500">
+                          {isToday ? "Today" : weekdayShort(date)}
+                        </span>
                       </span>
-                      <span className="text-xs font-normal text-neutral-500">
-                        {isToday ? "Today" : weekdayShort(date)}
-                      </span>
-                    </span>
-                    {dateAccessory?.(date)}
+                      {dateAccessory?.(date)}
+                    </div>
+                    {notes.length > 0 ? (
+                      <div className="mt-0.5 space-y-0.5">
+                        {notes.map((note, index) => (
+                          <p
+                            key={`${note}-${index}`}
+                            className="break-words text-[11px] font-normal leading-snug text-neutral-500"
+                          >
+                            {note}
+                          </p>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 </th>
                 {members.map((member) => (
-                  <td key={member.id} className="h-14 border-l border-neutral-200 p-0">
-                    {renderCell(member.id, date)}
+                  <td key={member.id} className="relative border-l border-neutral-200 p-0">
+                    <div className="h-14" aria-hidden />
+                    <div className="absolute inset-0">
+                      {renderCell(member.id, date)}
+                    </div>
                   </td>
                 ))}
               </tr>

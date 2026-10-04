@@ -26,10 +26,12 @@ export function GroupMonthStepsDashboard({
   month,
   members,
   today,
+  dateNotes,
 }: {
   month: YearMonth;
   members: StepsDashboardMember[];
   today: string;
+  dateNotes?: Record<string, string[]>;
 }) {
   const memberById = new Map(members.map((member) => [member.id, member]));
 
@@ -43,6 +45,7 @@ export function GroupMonthStepsDashboard({
         members={members}
         today={today}
         footerValues={members.map((member) => member.totalPenalty)}
+        dateNotes={dateNotes}
         renderCell={(memberId, date) => {
           const cell = memberById.get(memberId)?.cells[date];
           const steps = cell?.steps;

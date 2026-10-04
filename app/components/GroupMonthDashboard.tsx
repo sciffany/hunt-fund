@@ -30,11 +30,13 @@ export function GroupMonthDashboard({
   month,
   members,
   today,
+  dateNotes,
 }: {
   groupId: string;
   month: YearMonth;
   members: DashboardMember[];
   today: string;
+  dateNotes?: Record<string, string[]>;
 }) {
   const memberById = new Map(members.map((member) => [member.id, member]));
   const [selection, setSelection] = useState<{
@@ -59,6 +61,7 @@ export function GroupMonthDashboard({
         members={members}
         today={today}
         footerValues={members.map((member) => member.totalPenalty)}
+        dateNotes={dateNotes}
         dateAccessory={(date) =>
           isNightRefreshable(date, today) ? (
             <RefreshSleepNightButton groupId={groupId} night={date} />
@@ -72,7 +75,7 @@ export function GroupMonthDashboard({
           return (
             <button
               type="button"
-              className="group block w-full cursor-pointer text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-neutral-400"
+              className="group block h-full w-full cursor-pointer text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-neutral-400"
               aria-label={`View sleep events for ${label}`}
               onClick={() => setSelection({ memberId, date })}
             >

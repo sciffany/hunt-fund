@@ -29,6 +29,8 @@ import { prisma } from "@/lib/prisma";
 import { displayNameOf, requireOnboardedUser } from "@/lib/session";
 import {
   DEFAULT_TIMEZONE,
+  WEEKDAYS,
+  WEEKDAY_LABELS,
   bedtimeForNight,
   bedtimeInstant,
   defaultSleepTimes,
@@ -39,6 +41,8 @@ import {
   parseDateOnly,
   parseSleepTimes,
   todayInTimeZone,
+  type SleepTimesByWeekday,
+  type Weekday,
 } from "@/lib/sleep";
 
 function sharedDateNotes(
@@ -60,9 +64,33 @@ function sharedDateNotes(
   return notes;
 }
 
+function sleepTimeChangeText(
+  previous: SleepTimesByWeekday,
+  next: SleepTimesByWeekday,
+): string | null {
+  const changed = WEEKDAYS.filter((day) => previous[day] !== next[day]);
+  if (changed.length === 0) return null;
+
+  const dayLabel = (day: Weekday) => WEEKDAY_LABELS[day].slice(0, 3);
+  const nextTimes = new Set(changed.map((day) => next[day]));
+  if (nextTimes.size === 1) {
+    const bedtime = formatHalfHoursPast8pm(next[changed[0]]);
+    if (changed.length === WEEKDAYS.length) return `Bedtime ${bedtime}`;
+    return `Bedtime ${bedtime} · ${changed.map(dayLabel).join(", ")}`;
+  }
+
+  return `Bedtime ${changed
+    .map((day) => `${dayLabel(day)} ${formatHalfHoursPast8pm(next[day])}`)
+    .join(", ")}`;
+}
+
 function sleepDateNotes(
   members: {
     user: Parameters<typeof displayNameOf>[0];
+    sleepSchedules: {
+      effectiveFrom: Date;
+      times: unknown;
+    }[];
     sleepOverrides: {
       date: Date;
       halfHoursPast8pm: number;
@@ -73,17 +101,35 @@ function sleepDateNotes(
 ): Record<string, string[]> {
   const visible = new Set(dates);
   const byDate = new Map<string, { name: string; text: string }[]>();
+  const push = (date: string, name: string, text: string) => {
+    const list = byDate.get(date) ?? [];
+    list.push({ name, text });
+    byDate.set(date, list);
+  };
+
   for (const member of members) {
     const name = displayNameOf(member.user);
+    const schedules = [...member.sleepSchedules].sort((a, b) =>
+      formatDateOnly(a.effectiveFrom).localeCompare(formatDateOnly(b.effectiveFrom)),
+    );
+    let previousTimes: SleepTimesByWeekday | null = null;
+    for (const schedule of schedules) {
+      const times = parseSleepTimes(schedule.times);
+      if (!times) continue;
+      const date = formatDateOnly(schedule.effectiveFrom);
+      if (previousTimes && visible.has(date)) {
+        const text = sleepTimeChangeText(previousTimes, times);
+        if (text) push(date, name, text);
+      }
+      previousTimes = times;
+    }
+
     for (const override of member.sleepOverrides) {
       const date = formatDateOnly(override.date);
       if (!visible.has(date)) continue;
       const bedtime = formatHalfHoursPast8pm(override.halfHoursPast8pm);
       const note = override.note?.trim();
-      const text = note ? `${note} · ${bedtime}` : `Override · ${bedtime}`;
-      const list = byDate.get(date) ?? [];
-      list.push({ name, text });
-      byDate.set(date, list);
+      push(date, name, note ? `${note} · ${bedtime}` : `Override · ${bedtime}`);
     }
   }
   return sharedDateNotes(byDate, members.length);

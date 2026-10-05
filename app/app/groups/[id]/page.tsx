@@ -395,6 +395,7 @@ export default async function GroupPage({
 
       {stepTrackingEnabled ? (
         <GroupMonthStepsDashboard
+          groupId={group.id}
           month={month}
           today={todayInTimeZone(DEFAULT_TIMEZONE)}
           dateNotes={stepTargetDateNotes(group.members, dates)}

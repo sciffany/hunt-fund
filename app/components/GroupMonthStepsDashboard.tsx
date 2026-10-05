@@ -3,6 +3,7 @@ import {
   DashboardMonthTable,
   DashboardSection,
 } from "@/components/dashboard";
+import { RefreshStepsButton } from "@/components/RefreshStepsButton";
 import { type YearMonth } from "@/lib/month";
 
 export type StepsDashboardCell = {
@@ -23,11 +24,13 @@ function formatSteps(steps: number): string {
 }
 
 export function GroupMonthStepsDashboard({
+  groupId,
   month,
   members,
   today,
   dateNotes,
 }: {
+  groupId: string;
   month: YearMonth;
   members: StepsDashboardMember[];
   today: string;
@@ -39,6 +42,7 @@ export function GroupMonthStepsDashboard({
     <DashboardSection
       title="Daily steps"
       description="Total steps for each day. Highlighted cells missed the target."
+      actions={<RefreshStepsButton groupId={groupId} />}
     >
       <DashboardMonthTable
         month={month}

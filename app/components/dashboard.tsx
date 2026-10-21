@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import Link from "next/link";
 import {
   datesInMonth,
@@ -21,7 +21,7 @@ export function DashboardMonthNav({
   const next = formatYearMonth(shiftYearMonth(month, 1));
 
   return (
-    <div className="mt-8 flex items-center justify-center gap-2">
+    <div className="mt-4 flex items-center justify-center gap-2 sm:mt-8">
       <Link
         href={`/groups/${groupId}?month=${previous}`}
         aria-label="Previous month"
@@ -59,8 +59,8 @@ export function DashboardSection({
   children: ReactNode;
 }) {
   return (
-    <section className="mt-6 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-neutral-200 px-4 py-3.5">
+    <section className="mt-4 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm sm:mt-6">
+      <div className="flex flex-wrap items-start justify-between gap-2 border-b border-neutral-200 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3.5">
         <div>
           <h2 className="text-sm font-semibold text-neutral-900">{title}</h2>
           {description ? (
@@ -87,21 +87,21 @@ export function DashboardMetricCell({
 }) {
   return (
     <div
-      className={`flex h-full min-h-14 items-center justify-end overflow-hidden px-3 ${flagged ? "bg-rose-50" : ""} ${className}`}
+      className={`flex h-full min-h-11 items-center justify-end overflow-hidden px-1 sm:min-h-14 sm:px-3 ${flagged ? "bg-rose-50" : ""} ${className}`}
     >
       {value === null ? (
         <span className="text-neutral-300">—</span>
       ) : (
-        <div className="text-right leading-tight">
+        <div className="min-w-0 text-right leading-tight">
           <span
-            className={`tabular-nums ${
+            className={`block truncate tabular-nums ${
               flagged ? "font-medium text-rose-950" : "text-neutral-800"
             }`}
           >
             {value}
           </span>
           {flagged && penaltyLabel ? (
-            <span className="mt-0.5 block text-xs tabular-nums text-rose-700">
+            <span className="mt-0.5 block truncate text-[10px] tabular-nums text-rose-700 sm:text-xs">
               {penaltyLabel}
             </span>
           ) : null}
@@ -135,17 +135,23 @@ export function DashboardMonthTable({
   const dates = datesInMonth(month);
   const hasDateNotes = dates.some((date) => (dateNotes?.[date]?.length ?? 0) > 0);
   const dateColumnWidth = hasDateNotes ? "14rem" : "8rem";
+  const fitsOnScreen = members.length <= 3;
 
   return (
     <div className="overflow-x-auto">
       <table
-        className="w-full table-fixed border-collapse text-sm"
-        style={{
-          minWidth: `calc(${dateColumnWidth} + ${Math.max(members.length, 1) * 9}rem)`,
-        }}
+        className="dashboard-month-table w-full table-fixed border-collapse text-[11px] sm:text-sm"
+        data-fit={fitsOnScreen ? "true" : undefined}
+        style={
+          fitsOnScreen
+            ? undefined
+            : {
+                minWidth: `calc(${dateColumnWidth} + ${members.length * 9}rem)`,
+              }
+        }
       >
         <colgroup>
-          <col style={{ width: dateColumnWidth }} />
+          <col className="dashboard-date-col" style={{ width: dateColumnWidth }} />
           {members.map((member) => (
             <col key={member.id} />
           ))}
@@ -154,7 +160,7 @@ export function DashboardMonthTable({
           <tr className="border-b border-neutral-300">
             <th
               scope="col"
-              className="sticky left-0 z-20 bg-neutral-50 px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-wider text-neutral-500 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)]"
+              className="sticky left-0 z-20 bg-neutral-50 px-1 py-1.5 text-left text-[10px] font-medium uppercase tracking-wide text-neutral-500 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] sm:px-3 sm:py-2.5 sm:text-[11px] sm:tracking-wider"
             >
               Date
             </th>
@@ -163,7 +169,7 @@ export function DashboardMonthTable({
                 key={member.id}
                 scope="col"
                 title={member.displayName}
-                className="min-w-0 border-l border-neutral-200 bg-neutral-50 px-3 py-2.5 text-left text-xs font-medium text-neutral-700"
+                className="min-w-0 border-l border-neutral-200 bg-neutral-50 px-1 py-1.5 text-left text-[11px] font-medium text-neutral-700 sm:px-3 sm:py-2.5 sm:text-xs"
               >
                 <span className="block truncate">{member.displayName}</span>
               </th>
@@ -177,50 +183,76 @@ export function DashboardMonthTable({
             const notes = dateNotes?.[date] ?? [];
 
             return (
-              <tr key={date} className={`border-t border-neutral-200 ${surface}`}>
-                <th
-                  scope="row"
-                  className={`sticky left-0 z-10 px-3 text-left font-medium text-neutral-700 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] ${surface}`}
-                >
-                  <div
-                    className={`flex flex-col justify-center ${
-                      notes.length > 0 ? "min-h-14 py-1.5" : "h-14"
-                    }`}
+              <Fragment key={date}>
+                <tr className={`border-t border-neutral-200 ${surface}`}>
+                  <th
+                    scope="row"
+                    className={`sticky left-0 z-10 px-1 text-left font-medium text-neutral-700 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] sm:px-3 ${surface}`}
                   >
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="flex items-baseline gap-1.5">
-                        <span className="inline-block w-6 text-right tabular-nums">
-                          {dayOfMonth(date)}
+                    <div
+                      className={`flex flex-col justify-center ${
+                        notes.length > 0
+                          ? "h-11 sm:h-auto sm:min-h-14 sm:py-1.5"
+                          : "h-11 sm:h-14"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-0.5">
+                        <span className="flex min-w-0 flex-col leading-tight sm:flex-row sm:items-baseline sm:gap-1.5">
+                          <span className="tabular-nums sm:inline-block sm:w-6 sm:text-right">
+                            {dayOfMonth(date)}
+                          </span>
+                          <span className="truncate text-[10px] font-normal text-neutral-500 sm:text-xs">
+                            {isToday ? "Today" : weekdayShort(date)}
+                          </span>
                         </span>
-                        <span className="text-xs font-normal text-neutral-500">
-                          {isToday ? "Today" : weekdayShort(date)}
-                        </span>
-                      </span>
-                      {dateAccessory?.(date)}
+                        {dateAccessory?.(date)}
+                      </div>
+                      {notes.length > 0 ? (
+                        <div className="mt-0.5 hidden space-y-0.5 sm:block">
+                          {notes.map((note, index) => (
+                            <p
+                              key={`${note}-${index}`}
+                              className="break-words text-[11px] font-normal leading-snug text-neutral-500"
+                            >
+                              {note}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
-                    {notes.length > 0 ? (
-                      <div className="mt-0.5 space-y-0.5">
+                  </th>
+                  {members.map((member) => (
+                    <td
+                      key={member.id}
+                      className="relative min-w-0 border-l border-neutral-200 p-0"
+                    >
+                      <div className="h-11 sm:h-14" aria-hidden />
+                      <div className="absolute inset-0">
+                        {renderCell(member.id, date)}
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+                {notes.length > 0 ? (
+                  <tr className={`sm:hidden ${surface}`}>
+                    <td
+                      colSpan={members.length + 1}
+                      className="px-2 pb-1.5 pt-0"
+                    >
+                      <div className="space-y-0.5">
                         {notes.map((note, index) => (
                           <p
                             key={`${note}-${index}`}
-                            className="break-words text-[11px] font-normal leading-snug text-neutral-500"
+                            className="break-words text-[10px] font-normal leading-snug text-neutral-500"
                           >
                             {note}
                           </p>
                         ))}
                       </div>
-                    ) : null}
-                  </div>
-                </th>
-                {members.map((member) => (
-                  <td key={member.id} className="relative border-l border-neutral-200 p-0">
-                    <div className="h-14" aria-hidden />
-                    <div className="absolute inset-0">
-                      {renderCell(member.id, date)}
-                    </div>
-                  </td>
-                ))}
-              </tr>
+                    </td>
+                  </tr>
+                ) : null}
+              </Fragment>
             );
           })}
         </tbody>
@@ -228,16 +260,16 @@ export function DashboardMonthTable({
           <tr className="border-t border-neutral-300 bg-rose-50">
             <th
               scope="row"
-              className="sticky left-0 z-10 bg-rose-50 px-3 py-2.5 text-left text-[11px] font-medium uppercase tracking-wider text-rose-800 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)]"
+              className="sticky left-0 z-10 bg-rose-50 px-1 py-2 text-left text-[10px] font-medium uppercase tracking-wide text-rose-800 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] sm:px-3 sm:py-2.5 sm:text-[11px] sm:tracking-wider"
             >
               Penalty
             </th>
             {members.map((member, index) => (
               <td
                 key={member.id}
-                className="border-l border-rose-200 px-3 py-2.5 text-right font-medium tabular-nums text-rose-900"
+                className="min-w-0 border-l border-rose-200 px-1 py-2 text-right text-[11px] font-medium tabular-nums text-rose-900 sm:px-3 sm:py-2.5 sm:text-sm"
               >
-                {footerValues[index]}
+                <span className="block truncate">{footerValues[index]}</span>
               </td>
             ))}
           </tr>

@@ -123,3 +123,11 @@ export function formatPenaltyCharge(
   if (unit === "OTHER" && unitLabel) return `${number} ${unitLabel}`;
   return number;
 }
+
+export function formatPenaltyRate(
+  amount: string | number,
+  unit?: PenaltyUnit,
+  unitLabel?: string | null,
+): string {
+  return formatPenaltyCharge(penaltyAmountToCents(amount), unit, unitLabel);
+}

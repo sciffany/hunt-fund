@@ -12,7 +12,7 @@ export function AppShell({
   return (
     <div className="min-h-screen">
       <header className="border-b border-neutral-200/80 bg-white/90 backdrop-blur">
-        <div className={`mx-auto flex ${width} items-center justify-between px-4 py-3`}>
+        <div className={`mx-auto flex ${width} items-center justify-between px-2 py-2.5 sm:px-4 sm:py-3`}>
           <Link href="/home" className="text-sm font-semibold tracking-tight">
             Group Fund
           </Link>
@@ -26,7 +26,7 @@ export function AppShell({
           </nav>
         </div>
       </header>
-      <main className={`mx-auto ${width} px-4 py-8`}>{children}</main>
+      <main className={`mx-auto ${width} px-2 py-4 sm:px-4 sm:py-8`}>{children}</main>
     </div>
   );
 }

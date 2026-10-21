@@ -3,6 +3,13 @@
 import { useActionState, useState } from "react";
 import { ConfirmForm } from "@/components/ConfirmForm";
 import {
+  countPhrase,
+  datedDetail,
+  memberIdentity,
+  sectionMeta,
+  SettingsDisclosure,
+} from "@/components/SettingsDisclosure";
+import {
   StepTrackingSettings,
   type StepMemberView,
 } from "@/components/StepTrackingSettings";
@@ -18,6 +25,7 @@ import {
 } from "@/lib/actions/sleep";
 import {
   DEFAULT_PENALTY_AMOUNT,
+  formatPenaltyRate,
   MAX_UNIT_LABEL_LENGTH,
   PENALTY_UNITS,
   PENALTY_UNIT_LABELS,
@@ -358,6 +366,21 @@ function OverrideForm({
   );
 }
 
+function sleepPenaltyDetail(member: SleepMemberView, onDate: string): string | undefined {
+  return datedDetail(member.penalties, onDate, (penalty) => {
+    return `${formatPenaltyRate(penalty.amount, penalty.unit, penalty.unitLabel)} / half hour`;
+  });
+}
+
+function sleepMemberMeta(member: SleepMemberView, onDate: string): string {
+  return [
+    memberIdentity(member),
+    countPhrase(member.schedules.length, "schedule"),
+    countPhrase(member.overrides.length, "override"),
+    sleepPenaltyDetail(member, onDate) ?? "No penalty",
+  ].join(" · ");
+}
+
 function MemberSleepCard({
   groupId,
   member,
@@ -370,102 +393,120 @@ function MemberSleepCard({
   defaultDate: string;
 }) {
   const overrideTimezone = coveringTimezone(member.schedules, defaultDate);
+  const scheduleDetail = datedDetail(member.schedules, defaultDate, (schedule) => {
+    return schedule.timezone.replaceAll("_", " ");
+  });
 
   return (
-    <div className="rounded-md border border-neutral-200 bg-white p-4">
-      <div>
-        <p className="text-sm font-medium">{member.displayName}</p>
-        <p className="text-xs text-neutral-500">
-          {member.username ? `@${member.username}` : "No username yet"}
-          {member.role === "OWNER" ? " · Owner" : ""}
-        </p>
-      </div>
+    <SettingsDisclosure
+      title={member.displayName}
+      meta={sleepMemberMeta(member, defaultDate)}
+      tone="member"
+    >
+      <div className="space-y-3">
+        <SettingsDisclosure
+          title="Weekly schedules"
+          meta={sectionMeta(member.schedules.length, "schedule", scheduleDetail)}
+          heading="h4"
+          tone="section"
+        >
+          <div className="space-y-3">
+            <p className="text-xs text-neutral-500">
+              Add another schedule when someone travels — a new start date and timezone.
+            </p>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {member.schedules.map((schedule) => (
+                <ScheduleForm
+                  key={schedule.id}
+                  groupId={groupId}
+                  groupMemberId={member.id}
+                  schedule={schedule}
+                  timeZones={timeZones}
+                  defaultDate={defaultDate}
+                />
+              ))}
+              <ScheduleForm
+                key={`new-schedule-${member.schedules.map((s) => s.id).join(",")}`}
+                groupId={groupId}
+                groupMemberId={member.id}
+                timeZones={timeZones}
+                defaultDate={defaultDate}
+              />
+            </div>
+          </div>
+        </SettingsDisclosure>
 
-      <div className="mt-4 space-y-3">
-        <h4 className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-          Weekly schedules
-        </h4>
-        <p className="text-xs text-neutral-500">
-          Add another schedule when someone travels — a new start date and timezone.
-        </p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          {member.schedules.map((schedule) => (
-            <ScheduleForm
-              key={schedule.id}
-              groupId={groupId}
-              groupMemberId={member.id}
-              schedule={schedule}
-              timeZones={timeZones}
-              defaultDate={defaultDate}
-            />
-          ))}
-          <ScheduleForm
-            key={`new-schedule-${member.schedules.map((s) => s.id).join(",")}`}
-            groupId={groupId}
-            groupMemberId={member.id}
-            timeZones={timeZones}
-            defaultDate={defaultDate}
-          />
-        </div>
-      </div>
+        <SettingsDisclosure
+          title="One-day overrides"
+          meta={sectionMeta(member.overrides.length, "override")}
+          heading="h4"
+          tone="section"
+        >
+          <div className="space-y-3">
+            <p className="text-xs text-neutral-500">
+              Use these for holidays or stay-overs, not for a whole trip.
+            </p>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {member.overrides.map((override) => (
+                <OverrideForm
+                  key={override.id}
+                  groupId={groupId}
+                  groupMemberId={member.id}
+                  override={override}
+                  timeZones={timeZones}
+                  defaultDate={defaultDate}
+                  defaultTimezone={overrideTimezone}
+                />
+              ))}
+              <OverrideForm
+                key={`new-override-${member.overrides.map((o) => o.id).join(",")}`}
+                groupId={groupId}
+                groupMemberId={member.id}
+                timeZones={timeZones}
+                defaultDate={defaultDate}
+                defaultTimezone={overrideTimezone}
+              />
+            </div>
+          </div>
+        </SettingsDisclosure>
 
-      <div className="mt-6 space-y-3">
-        <h4 className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-          One-day overrides
-        </h4>
-        <p className="text-xs text-neutral-500">
-          Use these for holidays or stay-overs, not for a whole trip.
-        </p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          {member.overrides.map((override) => (
-            <OverrideForm
-              key={override.id}
-              groupId={groupId}
-              groupMemberId={member.id}
-              override={override}
-              timeZones={timeZones}
-              defaultDate={defaultDate}
-              defaultTimezone={overrideTimezone}
-            />
-          ))}
-          <OverrideForm
-            key={`new-override-${member.overrides.map((o) => o.id).join(",")}`}
-            groupId={groupId}
-            groupMemberId={member.id}
-            timeZones={timeZones}
-            defaultDate={defaultDate}
-            defaultTimezone={overrideTimezone}
-          />
-        </div>
+        <SettingsDisclosure
+          title="Late-sleep penalty"
+          meta={sectionMeta(
+            member.penalties.length,
+            "penalty",
+            sleepPenaltyDetail(member, defaultDate),
+            "penalties",
+          )}
+          heading="h4"
+          tone="section"
+        >
+          <div className="space-y-3">
+            <p className="text-xs text-neutral-500">
+              Add another period when the rate changes. The latest start date on or
+              before a night is the one that applies.
+            </p>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {member.penalties.map((penalty) => (
+                <PenaltyForm
+                  key={penalty.id}
+                  groupId={groupId}
+                  groupMemberId={member.id}
+                  penalty={penalty}
+                  defaultDate={defaultDate}
+                />
+              ))}
+              <PenaltyForm
+                key={`new-penalty-${member.penalties.map((p) => p.id).join(",")}`}
+                groupId={groupId}
+                groupMemberId={member.id}
+                defaultDate={defaultDate}
+              />
+            </div>
+          </div>
+        </SettingsDisclosure>
       </div>
-
-      <div className="mt-6 space-y-3">
-        <h4 className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-          Late-sleep penalty
-        </h4>
-        <p className="text-xs text-neutral-500">
-          Add another period when the rate changes. The latest start date on or
-          before a night is the one that applies.
-        </p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          {member.penalties.map((penalty) => (
-            <PenaltyForm
-              key={penalty.id}
-              groupId={groupId}
-              groupMemberId={member.id}
-              penalty={penalty}
-              defaultDate={defaultDate}
-            />
-          ))}
-          <PenaltyForm
-            key={`new-penalty-${member.penalties.map((p) => p.id).join(",")}`}
-            groupId={groupId}
-            groupMemberId={member.id}
-            defaultDate={defaultDate}
-          />
-        </div>
-      </div>
-    </div>
+    </SettingsDisclosure>
   );
 }
 
@@ -608,19 +649,24 @@ export function SleepTrackingSettings({
       </div>
 
       {sleepTrackingEnabled ? (
-        <div className="mt-4 space-y-4">
-          <h3 className="text-sm font-medium text-neutral-700">
-            Sleep time based on gadget usage
-          </h3>
-          {members.map((member) => (
-            <MemberSleepCard
-              key={member.id}
-              groupId={groupId}
-              member={member}
-              timeZones={timeZones}
-              defaultDate={defaultDate}
-            />
-          ))}
+        <div className="mt-4">
+          <SettingsDisclosure
+            title="Sleep time based on gadget usage"
+            meta={countPhrase(members.length, "member")}
+            heading="h3"
+          >
+            <div className="space-y-3">
+              {members.map((member) => (
+                <MemberSleepCard
+                  key={member.id}
+                  groupId={groupId}
+                  member={member}
+                  timeZones={timeZones}
+                  defaultDate={defaultDate}
+                />
+              ))}
+            </div>
+          </SettingsDisclosure>
         </div>
       ) : null}
 

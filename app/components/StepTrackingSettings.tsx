@@ -2,6 +2,13 @@
 
 import { useActionState, useState } from "react";
 import { ConfirmForm } from "@/components/ConfirmForm";
+import {
+  countPhrase,
+  datedDetail,
+  memberIdentity,
+  sectionMeta,
+  SettingsDisclosure,
+} from "@/components/SettingsDisclosure";
 import type { ActionState } from "@/lib/actions/profile";
 import {
   deleteStepPenalty,
@@ -11,6 +18,7 @@ import {
 } from "@/lib/actions/steps";
 import {
   DEFAULT_PENALTY_AMOUNT,
+  formatPenaltyRate,
   MAX_UNIT_LABEL_LENGTH,
   PENALTY_UNITS,
   PENALTY_UNIT_LABELS,
@@ -237,6 +245,26 @@ function PenaltyForm({
   );
 }
 
+function stepTargetDetail(member: StepMemberView, onDate: string): string | undefined {
+  return datedDetail(member.targets, onDate, (target) => {
+    return `${target.targetSteps.toLocaleString("en-US")} steps`;
+  });
+}
+
+function stepPenaltyDetail(member: StepMemberView, onDate: string): string | undefined {
+  return datedDetail(member.penalties, onDate, (penalty) => {
+    return `${formatPenaltyRate(penalty.amount, penalty.unit, penalty.unitLabel)} / 500 steps`;
+  });
+}
+
+function stepMemberMeta(member: StepMemberView, onDate: string): string {
+  return [
+    memberIdentity(member),
+    stepTargetDetail(member, onDate) ?? "No target",
+    stepPenaltyDetail(member, onDate) ?? "No penalty",
+  ].join(" · ");
+}
+
 function MemberStepCard({
   groupId,
   member,
@@ -247,69 +275,80 @@ function MemberStepCard({
   defaultDate: string;
 }) {
   return (
-    <div className="rounded-md border border-neutral-200 bg-white p-4">
-      <div>
-        <p className="text-sm font-medium">{member.displayName}</p>
-        <p className="text-xs text-neutral-500">
-          {member.username ? `@${member.username}` : "No username yet"}
-          {member.role === "OWNER" ? " · Owner" : ""}
-        </p>
-      </div>
+    <SettingsDisclosure
+      title={member.displayName}
+      meta={stepMemberMeta(member, defaultDate)}
+      tone="member"
+    >
+      <div className="space-y-3">
+        <SettingsDisclosure
+          title="Daily step targets"
+          meta={sectionMeta(member.targets.length, "target", stepTargetDetail(member, defaultDate))}
+          heading="h4"
+          tone="section"
+        >
+          <div className="space-y-3">
+            <p className="text-xs text-neutral-500">
+              Add another period when the target changes. The latest start date on or
+              before a day is the one that applies.
+            </p>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {member.targets.map((target) => (
+                <TargetForm
+                  key={target.id}
+                  groupId={groupId}
+                  groupMemberId={member.id}
+                  target={target}
+                  defaultDate={defaultDate}
+                />
+              ))}
+              <TargetForm
+                key={`new-target-${member.targets.map((t) => t.id).join(",")}`}
+                groupId={groupId}
+                groupMemberId={member.id}
+                defaultDate={defaultDate}
+              />
+            </div>
+          </div>
+        </SettingsDisclosure>
 
-      <div className="mt-4 space-y-3">
-        <h4 className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-          Daily step targets
-        </h4>
-        <p className="text-xs text-neutral-500">
-          Add another period when the target changes. The latest start date on or
-          before a day is the one that applies.
-        </p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          {member.targets.map((target) => (
-            <TargetForm
-              key={target.id}
-              groupId={groupId}
-              groupMemberId={member.id}
-              target={target}
-              defaultDate={defaultDate}
-            />
-          ))}
-          <TargetForm
-            key={`new-target-${member.targets.map((t) => t.id).join(",")}`}
-            groupId={groupId}
-            groupMemberId={member.id}
-            defaultDate={defaultDate}
-          />
-        </div>
+        <SettingsDisclosure
+          title="Missed-steps penalty"
+          meta={sectionMeta(
+            member.penalties.length,
+            "penalty",
+            stepPenaltyDetail(member, defaultDate),
+            "penalties",
+          )}
+          heading="h4"
+          tone="section"
+        >
+          <div className="space-y-3">
+            <p className="text-xs text-neutral-500">
+              Add another period when the rate changes. The latest start date on or
+              before a day is the one that applies.
+            </p>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {member.penalties.map((penalty) => (
+                <PenaltyForm
+                  key={penalty.id}
+                  groupId={groupId}
+                  groupMemberId={member.id}
+                  penalty={penalty}
+                  defaultDate={defaultDate}
+                />
+              ))}
+              <PenaltyForm
+                key={`new-penalty-${member.penalties.map((p) => p.id).join(",")}`}
+                groupId={groupId}
+                groupMemberId={member.id}
+                defaultDate={defaultDate}
+              />
+            </div>
+          </div>
+        </SettingsDisclosure>
       </div>
-
-      <div className="mt-6 space-y-3">
-        <h4 className="text-xs font-medium uppercase tracking-wide text-neutral-500">
-          Missed-steps penalty
-        </h4>
-        <p className="text-xs text-neutral-500">
-          Add another period when the rate changes. The latest start date on or
-          before a day is the one that applies.
-        </p>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          {member.penalties.map((penalty) => (
-            <PenaltyForm
-              key={penalty.id}
-              groupId={groupId}
-              groupMemberId={member.id}
-              penalty={penalty}
-              defaultDate={defaultDate}
-            />
-          ))}
-          <PenaltyForm
-            key={`new-penalty-${member.penalties.map((p) => p.id).join(",")}`}
-            groupId={groupId}
-            groupMemberId={member.id}
-            defaultDate={defaultDate}
-          />
-        </div>
-      </div>
-    </div>
+    </SettingsDisclosure>
   );
 }
 
@@ -323,16 +362,23 @@ export function StepTrackingSettings({
   defaultDate: string;
 }) {
   return (
-    <div className="mt-4 space-y-4">
-      <h3 className="text-sm font-medium text-neutral-700">Daily step count</h3>
-      {members.map((member) => (
-        <MemberStepCard
-          key={member.id}
-          groupId={groupId}
-          member={member}
-          defaultDate={defaultDate}
-        />
-      ))}
+    <div className="mt-4">
+      <SettingsDisclosure
+        title="Daily step count"
+        meta={countPhrase(members.length, "member")}
+        heading="h3"
+      >
+        <div className="space-y-3">
+          {members.map((member) => (
+            <MemberStepCard
+              key={member.id}
+              groupId={groupId}
+              member={member}
+              defaultDate={defaultDate}
+            />
+          ))}
+        </div>
+      </SettingsDisclosure>
     </div>
   );
 }

@@ -16,3 +16,15 @@ body {
   color: var(--foreground);
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
+
+/* Phones: a group of three should show every person's column without sideways scrolling. */
+@media (max-width: 639px) {
+  .dashboard-month-table[data-fit="true"] {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .dashboard-month-table[data-fit="true"] col.dashboard-date-col {
+    width: 4rem !important;
+  }
+}

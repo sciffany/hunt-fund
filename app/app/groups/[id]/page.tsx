@@ -3,10 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { DashboardMonthNav } from "@/components/dashboard";
-import {
-  GroupMonthDashboard,
-  type DashboardCell,
-} from "@/components/GroupMonthDashboard";
+import { GroupMonthDashboard } from "@/components/GroupMonthDashboard";
 import {
   GroupMonthStepsDashboard,
   type StepsDashboardCell,
@@ -21,23 +18,19 @@ import {
   coveringPenalty,
   formatPenaltyAmount,
   formatPenaltyCharge,
-  nightlyPenaltyCents,
   stepPenaltyCents,
 } from "@/lib/penalty";
 import { stepShortfallUnits } from "@/lib/steps";
 import { prisma } from "@/lib/prisma";
 import { displayNameOf, requireOnboardedUser } from "@/lib/session";
+import { chargeSleepMonth } from "@/lib/sleep-month-charge";
 import {
   DEFAULT_TIMEZONE,
   WEEKDAYS,
   WEEKDAY_LABELS,
-  bedtimeForNight,
-  bedtimeInstant,
   defaultSleepTimes,
   formatDateOnly,
   formatHalfHoursPast8pm,
-  formatRoundedLastActivity,
-  nightOverdue,
   parseDateOnly,
   parseSleepTimes,
   todayInTimeZone,
@@ -275,7 +268,7 @@ export default async function GroupPage({
         <span className="mx-1.5 text-neutral-300">/</span>
         <span className="text-neutral-700">{group.name}</span>
       </p>
-      <div className="mt-4 flex flex-wrap items-start justify-between gap-4">
+      <div className="mt-3 flex flex-wrap items-start justify-between gap-3 sm:mt-4 sm:gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{group.name}</h1>
           <p className="mt-1 text-sm text-neutral-500">{memberCountLabel}</p>
@@ -334,60 +327,33 @@ export default async function GroupPage({
             unit: penalty.unit,
             unitLabel: penalty.unitLabel,
           }));
-          const nights = new Map(
-            member.user.sleepNights.map((night) => [
-              formatDateOnly(night.night),
-              night.lastActivity,
-            ]),
+          const lastActivityBySleepNight = new Map(
+            member.user.sleepNights.flatMap((night) => {
+              if (!night.lastActivity) return [];
+              return [[formatDateOnly(night.night), night.lastActivity] as const];
+            }),
           );
-          const cells: Record<string, DashboardCell> = {};
-          let totalCents = 0;
-          for (const date of dates) {
-            const bedtimeSpec = bedtimeForNight(schedules, overrides, date);
-            const lastActivity = nights.get(date);
-            const penalty = coveringPenalty(penalties, date);
-            if (!lastActivity) {
-              cells[date] = { time: null, overdue: false, penaltyLabel: null };
-              continue;
-            }
-
-            const { overdue, halfHours } = nightOverdue(
-              lastActivity,
-              bedtimeInstant(
-                date,
-                bedtimeSpec.halfHoursPast8pm,
-                bedtimeSpec.timezone,
-              ),
-            );
-            const cents = penalty
-              ? nightlyPenaltyCents(halfHours, penalty.amount)
-              : 0;
-            totalCents += cents;
-            cells[date] = {
-              time: formatRoundedLastActivity(
-                lastActivity,
-                bedtimeSpec.timezone,
-              ),
-              overdue,
-              penaltyLabel: overdue
-                ? formatPenaltyCharge(cents, penalty?.unit, penalty?.unitLabel)
-                : null,
-            };
-          }
-
-          const latestPenalty = coveringPenalty(
+          const charged = chargeSleepMonth({
+            dates,
+            schedules,
+            overrides,
             penalties,
-            dates[dates.length - 1],
-          );
+            lastActivityBySleepNight,
+          });
           return {
             id: member.id,
             displayName: displayNameOf(member.user),
-            cells,
-            totalPenalty: formatPenaltyCharge(
-              totalCents,
-              latestPenalty?.unit,
-              latestPenalty?.unitLabel,
+            cells: Object.fromEntries(
+              Object.entries(charged.cells).map(([date, cell]) => [
+                date,
+                {
+                  time: cell.time,
+                  overdue: cell.missedBedtime,
+                  penaltyLabel: cell.charge,
+                },
+              ]),
             ),
+            totalPenalty: charged.totalCharge,
           };
         })}
         />

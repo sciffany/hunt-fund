@@ -29,6 +29,8 @@ export default async function HomePage() {
       orderBy: { createdAt: "desc" },
     }),
   ]);
+  const pendingGroupIds = new Set(invites.map((invite) => invite.groupId));
+  const joined = memberships.filter((membership) => !pendingGroupIds.has(membership.group.id));
 
   return (
     <AppShell>
@@ -86,13 +88,13 @@ export default async function HomePage() {
 
       <section className="mt-8">
         <h2 className="text-sm font-medium text-neutral-500">Your groups</h2>
-        {memberships.length === 0 ? (
+        {joined.length === 0 ? (
           <p className="mt-3 text-sm text-neutral-600">
             You’re not in any groups yet. Create one, or wait for an invite.
           </p>
         ) : (
           <ul className="mt-3 divide-y divide-neutral-200 rounded-md border border-neutral-200 bg-white">
-            {memberships.map(({ group, role }) => (
+            {joined.map(({ group, role }) => (
               <li key={group.id}>
                 <Link
                   href={`/groups/${group.id}`}

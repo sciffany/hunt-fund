@@ -6,6 +6,8 @@ import { formatLatitude, formatLongitude } from "@/lib/work-arrival";
 import "leaflet/dist/leaflet.css";
 
 const DEFAULT_CENTER = { latitude: 1.3521, longitude: 103.8198 };
+const inputClass =
+  "mt-1 w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-500";
 
 function parsePoint(latitude: string, longitude: string) {
   if (!latitude.trim() || !longitude.trim()) return null;
@@ -177,6 +179,21 @@ export function PlacePickerMap({
     };
   }, []);
 
+  function setCoordinate(kind: "latitude" | "longitude", value: string) {
+    if (kind === "latitude") onChangeRef.current(value, pointRef.current.longitude);
+    else onChangeRef.current(pointRef.current.latitude, value);
+  }
+
+  function normalizeCoordinate(kind: "latitude" | "longitude") {
+    const raw =
+      kind === "latitude" ? pointRef.current.latitude : pointRef.current.longitude;
+    if (!raw.trim()) return;
+    const formatted =
+      kind === "latitude" ? formatLatitude(Number(raw)) : formatLongitude(Number(raw));
+    if (!formatted || formatted === raw) return;
+    setCoordinate(kind, formatted);
+  }
+
   function useMyLocation() {
     if (!navigator.geolocation) {
       setLocateError("This browser can’t share your location.");
@@ -209,11 +226,37 @@ export function PlacePickerMap({
       <div className="overflow-hidden rounded-md border border-neutral-300">
         <div ref={containerRef} className="relative z-0 h-64 w-full" />
       </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="block text-sm">
+          Latitude
+          <input
+            name="latitude"
+            inputMode="decimal"
+            required
+            value={latitude}
+            onChange={(event) => setCoordinate("latitude", event.target.value)}
+            onBlur={() => normalizeCoordinate("latitude")}
+            placeholder="-90 to 90"
+            className={inputClass}
+          />
+        </label>
+        <label className="block text-sm">
+          Longitude
+          <input
+            name="longitude"
+            inputMode="decimal"
+            required
+            value={longitude}
+            onChange={(event) => setCoordinate("longitude", event.target.value)}
+            onBlur={() => normalizeCoordinate("longitude")}
+            placeholder="-180 to 180"
+            className={inputClass}
+          />
+        </label>
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-neutral-600">
-          {latitude && longitude
-            ? `${latitude}, ${longitude}`
-            : "Click the map to choose the place."}
+          Type coordinates, click the map, or drag the pin.
         </p>
         <button
           type="button"

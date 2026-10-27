@@ -2,6 +2,7 @@
 
 import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
+import { hasPendingInvite } from "@/lib/pending-members";
 import { prisma } from "@/lib/prisma";
 import type { ActionState } from "@/lib/actions/profile";
 import { requireOnboardedUser } from "@/lib/session";
@@ -607,6 +608,9 @@ export async function listSleepNightEvents(
   if (!window || window.groupId !== groupId) {
     return { ok: false, error: "That member isn’t in this group." };
   }
+  if (await hasPendingInvite(groupId, window.userId)) {
+    return { ok: false, error: "They haven’t joined this group yet." };
+  }
 
   const events = await prisma.sleepEvent.findMany({
     where: {
@@ -660,6 +664,9 @@ export async function deleteSleepEvent(
     where: { groupId_userId: { groupId, userId: event.userId } },
   });
   if (!member) return { ok: false, error: "That event isn’t in this group." };
+  if (await hasPendingInvite(groupId, event.userId)) {
+    return { ok: false, error: "They haven’t joined this group yet." };
+  }
 
   await prisma.sleepEvent.delete({ where: { id: eventId } });
   await recomputeGroupSleepNight(
@@ -715,6 +722,13 @@ export async function deleteSleepEvents(
   });
   if (members.length !== userIds.length) {
     return { ok: false, error: "Some of those events aren’t in this group." };
+  }
+  const pending = await prisma.groupInvite.findMany({
+    where: { groupId, status: "PENDING", recipientId: { in: userIds } },
+    select: { recipientId: true },
+  });
+  if (pending.length > 0) {
+    return { ok: false, error: "They haven’t joined this group yet." };
   }
 
   const result = await prisma.sleepEvent.deleteMany({

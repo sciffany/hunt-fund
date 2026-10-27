@@ -13,6 +13,10 @@ import {
 export type ActionState = {
   error?: string;
   success?: string;
+  /** Saved check-in that is not at the place. */
+  warning?: string;
+  /** True when this check-in is at the place and worth a celebration. */
+  celebrate?: boolean;
 };
 
 export async function completeOnboarding(

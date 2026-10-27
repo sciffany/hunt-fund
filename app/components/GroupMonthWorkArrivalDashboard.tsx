@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useRef, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ConfirmForm } from "@/components/ConfirmForm";
 import {
   DashboardMetricCell,
@@ -29,8 +30,85 @@ export type WorkArrivalDashboardMember = {
   totalPenalty: string;
 };
 
+const CONFETTI_COLORS = ["#f59e0b", "#10b981", "#38bdf8", "#f43f5e", "#a78bfa", "#facc15"];
+
+function confettiPieces(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    left: (index * 37) % 100,
+    delay: (index % 8) * 0.05,
+    duration: 1.45 + (index % 5) * 0.16,
+    drift: (index % 2 === 0 ? 1 : -1) * (24 + (index % 7) * 14),
+    spin: (index % 2 === 0 ? 1 : -1) * (200 + (index % 5) * 80),
+    color: CONFETTI_COLORS[index % CONFETTI_COLORS.length],
+    size: 7 + (index % 4) * 3,
+    round: index % 3 === 0,
+  }));
+}
+
+function CheckInCelebration({ burst }: { burst: number }) {
+  const [visible, setVisible] = useState(false);
+  const pieces = useRef(confettiPieces(42)).current;
+
+  useEffect(() => {
+    if (!burst) return;
+    setVisible(true);
+    const timer = window.setTimeout(() => setVisible(false), 2200);
+    return () => window.clearTimeout(timer);
+  }, [burst]);
+
+  if (!visible || typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="pointer-events-none fixed inset-0 z-50 overflow-hidden"
+      aria-live="polite"
+    >
+      <style>{`
+        @keyframes checkin-confetti-fall {
+          0% { transform: translate3d(0, -12vh, 0) rotate(0deg); opacity: 1; }
+          100% { transform: translate3d(var(--drift), 108vh, 0) rotate(var(--spin)); opacity: 0; }
+        }
+        @keyframes checkin-congrats {
+          0% { transform: translateY(8px) scale(0.86); opacity: 0; }
+          18% { transform: translateY(0) scale(1.06); opacity: 1; }
+          72% { transform: translateY(0) scale(1); opacity: 1; }
+          100% { transform: translateY(-6px) scale(1); opacity: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .checkin-confetti-piece { display: none; }
+          .checkin-congrats { animation: none; opacity: 1; }
+        }
+      `}</style>
+      {pieces.map((piece, index) => (
+        <span
+          key={index}
+          className="checkin-confetti-piece absolute top-0 block"
+          style={{
+            left: `${piece.left}%`,
+            width: piece.size,
+            height: piece.round ? piece.size : piece.size * 1.6,
+            background: piece.color,
+            borderRadius: piece.round ? 999 : 2,
+            animation: `checkin-confetti-fall ${piece.duration}s ${piece.delay}s ease-in both`,
+            ["--drift" as string]: `${piece.drift}px`,
+            ["--spin" as string]: `${piece.spin}deg`,
+          }}
+        />
+      ))}
+      <p
+        className="checkin-congrats absolute top-[22%] left-1/2 -translate-x-1/2 rounded-full bg-neutral-900 px-5 py-2 text-lg font-semibold tracking-tight text-white shadow-lg"
+        style={{ animation: "checkin-congrats 2s ease both" }}
+      >
+        Nice!
+      </p>
+    </div>,
+    document.body,
+  );
+}
+
 function FieldMessage({ state }: { state: ActionState }) {
   if (state.error) return <p className="text-sm text-red-700">{state.error}</p>;
+  if (state.warning) return <p className="text-sm text-amber-800">{state.warning}</p>;
   if (state.success) return <p className="text-sm text-green-700">{state.success}</p>;
   return null;
 }
@@ -39,9 +117,17 @@ function CheckInForm({ groupId }: { groupId: string }) {
   const [state, action, pending] = useActionState(recordWorkArrivalCheckIn, {});
   const [locating, setLocating] = useState(false);
   const [clientError, setClientError] = useState<string | null>(null);
+  const [burst, setBurst] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
   const latitudeRef = useRef<HTMLInputElement>(null);
   const longitudeRef = useRef<HTMLInputElement>(null);
+  const celebrated = useRef<ActionState | null>(null);
+
+  useEffect(() => {
+    if (!state.celebrate || celebrated.current === state) return;
+    celebrated.current = state;
+    setBurst((count) => count + 1);
+  }, [state]);
 
   function checkIn() {
     if (!navigator.geolocation) {
@@ -102,6 +188,7 @@ function CheckInForm({ groupId }: { groupId: string }) {
       ) : (
         <FieldMessage state={state} />
       )}
+      <CheckInCelebration burst={burst} />
     </form>
   );
 }

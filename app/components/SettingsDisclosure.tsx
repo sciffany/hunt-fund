@@ -17,7 +17,9 @@ export function countPhrase(
 export function memberIdentity(member: {
   username: string | null;
   role: "OWNER" | "MEMBER";
+  pending?: boolean;
 }): string {
+  if (member.pending) return "Hasn’t accepted";
   return [
     member.username ? `@${member.username}` : "No username yet",
     member.role === "OWNER" ? "Owner" : null,

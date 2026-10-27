@@ -23,6 +23,8 @@ export type DashboardMember = {
   displayName: string;
   cells: Record<string, DashboardCell>;
   totalPenalty: string;
+  /** Pending invitees stay on the grid, but their sleep events stay hidden. */
+  activityHidden?: boolean;
 };
 
 export function GroupMonthDashboard({
@@ -71,6 +73,11 @@ export function GroupMonthDashboard({
           const member = memberById.get(memberId);
           const cell = member?.cells[date];
           const flagged = cell?.overdue ?? false;
+          if (member?.activityHidden) {
+            return (
+              <DashboardMetricCell value={null} flagged={false} penaltyLabel={null} />
+            );
+          }
           const label = `${member?.displayName ?? "Member"}, ${weekdayShort(date)} ${date}`;
           return (
             <button

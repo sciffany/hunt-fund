@@ -9,11 +9,18 @@ import {
   parsePenaltyUnit,
   parsePenaltyUnitLabel,
 } from "@/lib/penalty";
-import { formatDateOnly, isValidTimeZone, parseDateOnly } from "@/lib/sleep";
+import {
+  coveringEntry,
+  formatDateOnly,
+  isValidTimeZone,
+  parseDateOnly,
+} from "@/lib/sleep";
 import { requireOnboardedUser } from "@/lib/session";
 import {
+  checkInFeedback,
   checklistFromWeekdays,
   earlierCheckIn,
+  isInsideRadius,
   parseArrivalMinutes,
   parseBlockMinutes,
   parseLatitude,
@@ -342,42 +349,64 @@ export async function recordWorkArrivalCheckIn(
   const existing = await prisma.workArrivalDay.findUnique({
     where: { userId_workDay: { userId: user.id, workDay } },
   });
+  let keptEarlier = false;
+  let point = { latitude: incoming.latitude, longitude: incoming.longitude };
   if (
     existing?.arrivedAt &&
     existing.latitude !== null &&
     existing.longitude !== null
   ) {
-    const kept = earlierCheckIn(
-      {
-        arrivedAt: existing.arrivedAt,
-        latitude: Number(existing.latitude),
-        longitude: Number(existing.longitude),
-      },
-      incoming,
-    );
-    if (kept.arrivedAt.getTime() === existing.arrivedAt.getTime()) {
-      return { success: "An earlier check-in is already saved for that day." };
+    const stored = {
+      arrivedAt: existing.arrivedAt,
+      latitude: Number(existing.latitude),
+      longitude: Number(existing.longitude),
+    };
+    const kept = earlierCheckIn(stored, incoming);
+    if (kept.arrivedAt.getTime() === stored.arrivedAt.getTime()) {
+      keptEarlier = true;
+      point = stored;
     }
   }
 
-  await prisma.workArrivalDay.upsert({
-    where: { userId_workDay: { userId: user.id, workDay } },
-    create: {
-      userId: user.id,
-      workDay,
-      arrivedAt: incoming.arrivedAt,
-      latitude: decimal(incoming.latitude),
-      longitude: decimal(incoming.longitude),
-    },
-    update: {
-      arrivedAt: incoming.arrivedAt,
-      latitude: decimal(incoming.latitude),
-      longitude: decimal(incoming.longitude),
+  if (!keptEarlier) {
+    await prisma.workArrivalDay.upsert({
+      where: { userId_workDay: { userId: user.id, workDay } },
+      create: {
+        userId: user.id,
+        workDay,
+        arrivedAt: incoming.arrivedAt,
+        latitude: decimal(incoming.latitude),
+        longitude: decimal(incoming.longitude),
+      },
+      update: {
+        arrivedAt: incoming.arrivedAt,
+        latitude: decimal(incoming.latitude),
+        longitude: decimal(incoming.longitude),
+      },
+    });
+    revalidateGroup(groupId);
+  }
+
+  const targets = await prisma.workArrivalTarget.findMany({
+    where: { groupMemberId: membership.id },
+    select: {
+      effectiveFrom: true,
+      latitude: true,
+      longitude: true,
+      radiusMeters: true,
     },
   });
-
-  revalidateGroup(groupId);
-  return { success: "Checked in." };
+  const place = coveringEntry(
+    targets.map((target) => ({
+      effectiveFrom: formatDateOnly(target.effectiveFrom),
+      latitude: Number(target.latitude),
+      longitude: Number(target.longitude),
+      radiusMeters: target.radiusMeters,
+    })),
+    formatDateOnly(workDay),
+  );
+  const insidePlace = place ? isInsideRadius(point, place) : null;
+  return checkInFeedback({ keptEarlier, insidePlace });
 }
 
 export async function deleteWorkArrivalCheckIn(formData: FormData) {

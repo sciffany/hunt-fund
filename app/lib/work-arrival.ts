@@ -7,6 +7,7 @@ import {
 import {
   DEFAULT_TIMEZONE,
   WEEKDAYS,
+  WEEKDAY_LABELS,
   coveringEntry,
   formatTimeInZone,
   isValidTimeZone,
@@ -131,6 +132,58 @@ export function formatArrivalMinutes(minutes: number): string {
   return `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
 }
 
+function sameWeekdays(a: WeekdayChecklist, b: WeekdayChecklist): boolean {
+  return WEEKDAYS.every((day) => a[day] === b[day]);
+}
+
+function countedWeekdays(days: WeekdayChecklist): string {
+  const labels = WEEKDAYS.filter((day) => days[day]).map((day) =>
+    WEEKDAY_LABELS[day].slice(0, 3),
+  );
+  return labels.length === 0 ? "no weekdays" : labels.join(", ");
+}
+
+/**
+ * Short date-column note for a new arrival target that differs from the one
+ * before it. States the new rule, the same way a bedtime or step-target change
+ * does. Timezone-only edits are omitted.
+ */
+export function arrivalTargetChangeNote(
+  previous: Pick<
+    WorkArrivalTargetForCharge,
+    "arrivalMinutes" | "days" | "latitude" | "longitude" | "radiusMeters"
+  >,
+  next: Pick<
+    WorkArrivalTargetForCharge,
+    "arrivalMinutes" | "days" | "latitude" | "longitude" | "radiusMeters"
+  >,
+): string | null {
+  const timeChanged = previous.arrivalMinutes !== next.arrivalMinutes;
+  const daysChanged = !sameWeekdays(previous.days, next.days);
+  const pinMoved =
+    previous.latitude !== next.latitude || previous.longitude !== next.longitude;
+  const radiusChanged = previous.radiusMeters !== next.radiusMeters;
+  if (!timeChanged && !daysChanged && !pinMoved && !radiusChanged) return null;
+
+  const parts: string[] = [];
+  if (timeChanged || daysChanged) {
+    const time = formatArrivalMinutes(next.arrivalMinutes);
+    parts.push(
+      daysChanged ? `Arrive by ${time} · ${countedWeekdays(next.days)}` : `Arrive by ${time}`,
+    );
+  }
+  if (pinMoved) {
+    parts.push(
+      radiusChanged
+        ? `Place · ${next.radiusMeters.toLocaleString("en-US")} m`
+        : "Place",
+    );
+  } else if (radiusChanged) {
+    parts.push(`Radius ${next.radiusMeters.toLocaleString("en-US")} m`);
+  }
+  return parts.join(" · ");
+}
+
 export function formatArrivalInput(minutes: number): string {
   const hour = Math.floor(minutes / 60);
   const minute = minutes % 60;
@@ -234,6 +287,33 @@ export function isInsideRadius(
   return distanceMeters(point, place) <= place.radiusMeters;
 }
 
+/**
+ * What to tell the member after a check-in attempt.
+ * `insidePlace` is null when the work day has no place to compare against.
+ * Celebration is only for a newly saved check-in that is inside the place.
+ */
+export function checkInFeedback(input: {
+  keptEarlier: boolean;
+  insidePlace: boolean | null;
+}): { success?: string; warning?: string; celebrate?: boolean } {
+  if (input.keptEarlier) {
+    if (input.insidePlace === false) {
+      return {
+        warning:
+          "An earlier check-in is already saved for that day, outside the place.",
+      };
+    }
+    return { success: "An earlier check-in is already saved for that day." };
+  }
+  if (input.insidePlace === false) {
+    return { warning: "Checked in outside the place." };
+  }
+  if (input.insidePlace === true) {
+    return { success: "Checked in.", celebrate: true };
+  }
+  return { success: "Checked in." };
+}
+
 /** The earlier instant wins. An equal instant keeps the check-in already stored. */
 export function earlierCheckIn(
   existing: CheckInPoint | null,
@@ -283,6 +363,8 @@ export function chargeWorkArrivalDay(input: {
   overrides: WorkArrivalOverrideForCharge[];
   penalties: WorkArrivalPenaltyForCharge[];
   checkIn: CheckInPoint | null;
+  /** Calendar date in the dashboard timezone. Days after this are not charged yet. */
+  today?: string;
 }): {
   counts: boolean;
   miss: boolean;
@@ -318,12 +400,13 @@ export function chargeWorkArrivalDay(input: {
     isInsideRadius(input.checkIn, target);
 
   if (!inside) {
+    const upcoming = input.today !== undefined && input.date > input.today && input.checkIn === null;
     return {
       counts: true,
-      miss: true,
+      miss: !upcoming,
       late: false,
       blocks: 0,
-      cents: capCents,
+      cents: upcoming ? 0 : capCents,
       timezone: clock.timezone,
       arrivedAt,
     };
@@ -371,6 +454,8 @@ export function chargeWorkArrivalMonth(input: {
   overrides: WorkArrivalOverrideForCharge[];
   penalties: WorkArrivalPenaltyForCharge[];
   checkInByWorkDay: ReadonlyMap<string, CheckInPoint | null>;
+  /** Calendar date in the dashboard timezone. Days after this are not charged yet. */
+  today?: string;
 }): {
   cells: Record<string, WorkArrivalChargeCell>;
   totalCharge: string;
@@ -385,6 +470,7 @@ export function chargeWorkArrivalMonth(input: {
       overrides: input.overrides,
       penalties: input.penalties,
       checkIn: input.checkInByWorkDay.get(date) ?? null,
+      today: input.today,
     });
     totalCents += charged.cents;
     const penalty = coveringPenalty(input.penalties, date);

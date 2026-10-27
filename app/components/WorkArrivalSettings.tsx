@@ -86,6 +86,7 @@ export type WorkArrivalMemberView = {
   displayName: string;
   username: string | null;
   role: "OWNER" | "MEMBER";
+  pending?: boolean;
   targets: WorkArrivalTargetView[];
   overrides: WorkArrivalOverrideView[];
   penalties: WorkArrivalPenaltyView[];
@@ -230,8 +231,6 @@ function TargetForm({
             />
           </div>
         </div>
-        <input type="hidden" name="latitude" value={latitude} />
-        <input type="hidden" name="longitude" value={longitude} />
         <label className="block text-sm">
           Radius (meters)
           <input

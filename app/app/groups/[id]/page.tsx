@@ -13,6 +13,11 @@ import {
 } from "@/components/GroupMonthWorkArrivalDashboard";
 import { leaveGroup } from "@/lib/actions/groups";
 import {
+  ensurePendingMemberships,
+  hasPendingInvite,
+  pendingMemberLabel,
+} from "@/lib/pending-members";
+import {
   currentYearMonth,
   datesInMonth,
   parseYearMonth,
@@ -41,6 +46,7 @@ import {
   type Weekday,
 } from "@/lib/sleep";
 import {
+  arrivalTargetChangeNote,
   chargeWorkArrivalMonth,
   checkInPoint,
   formatArrivalMinutes,
@@ -86,9 +92,18 @@ function sleepTimeChangeText(
     .join(", ")}`;
 }
 
+function noteName(
+  user: Parameters<typeof displayNameOf>[0] & { id: string },
+  pendingRecipientIds: ReadonlySet<string>,
+): string {
+  if (pendingRecipientIds.has(user.id)) return pendingMemberLabel(user);
+  return displayNameOf(user);
+}
+
 function sleepDateNotes(
+  pendingRecipientIds: ReadonlySet<string>,
   members: {
-    user: Parameters<typeof displayNameOf>[0];
+    user: Parameters<typeof displayNameOf>[0] & { id: string };
     sleepSchedules: {
       effectiveFrom: Date;
       times: unknown;
@@ -110,7 +125,7 @@ function sleepDateNotes(
   };
 
   for (const member of members) {
-    const name = displayNameOf(member.user);
+    const name = noteName(member.user, pendingRecipientIds);
     const schedules = [...member.sleepSchedules].sort((a, b) =>
       formatDateOnly(a.effectiveFrom).localeCompare(formatDateOnly(b.effectiveFrom)),
     );
@@ -138,8 +153,9 @@ function sleepDateNotes(
 }
 
 function stepTargetDateNotes(
+  pendingRecipientIds: ReadonlySet<string>,
   members: {
-    user: Parameters<typeof displayNameOf>[0];
+    user: Parameters<typeof displayNameOf>[0] & { id: string };
     stepTargets: { effectiveFrom: Date; targetSteps: number }[];
   }[],
   dates: string[],
@@ -147,7 +163,7 @@ function stepTargetDateNotes(
   const visible = new Set(dates);
   const byDate = new Map<string, { name: string; text: string }[]>();
   for (const member of members) {
-    const name = displayNameOf(member.user);
+    const name = noteName(member.user, pendingRecipientIds);
     const targets = [...member.stepTargets].sort((a, b) =>
       formatDateOnly(a.effectiveFrom).localeCompare(formatDateOnly(b.effectiveFrom)),
     );
@@ -169,8 +185,17 @@ function stepTargetDateNotes(
 }
 
 function arrivalDateNotes(
+  pendingRecipientIds: ReadonlySet<string>,
   members: {
-    user: Parameters<typeof displayNameOf>[0];
+    user: Parameters<typeof displayNameOf>[0] & { id: string };
+    workArrivalTargets: {
+      effectiveFrom: Date;
+      arrivalMinutes: number;
+      days: unknown;
+      latitude: unknown;
+      longitude: unknown;
+      radiusMeters: number;
+    }[];
     workArrivalOverrides: {
       date: Date;
       arrivalMinutes: number;
@@ -181,17 +206,48 @@ function arrivalDateNotes(
 ): Record<string, string[]> {
   const visible = new Set(dates);
   const byDate = new Map<string, { name: string; text: string }[]>();
+  const push = (date: string, name: string, text: string) => {
+    const list = byDate.get(date) ?? [];
+    list.push({ name, text });
+    byDate.set(date, list);
+  };
+
   for (const member of members) {
-    const name = displayNameOf(member.user);
+    const name = noteName(member.user, pendingRecipientIds);
+    const targets = [...member.workArrivalTargets].sort((a, b) =>
+      formatDateOnly(a.effectiveFrom).localeCompare(formatDateOnly(b.effectiveFrom)),
+    );
+    let previous: {
+      arrivalMinutes: number;
+      days: NonNullable<ReturnType<typeof parseWeekdayChecklist>>;
+      latitude: number;
+      longitude: number;
+      radiusMeters: number;
+    } | null = null;
+    for (const target of targets) {
+      const days = parseWeekdayChecklist(target.days);
+      if (!days) continue;
+      const snapshot = {
+        arrivalMinutes: target.arrivalMinutes,
+        days,
+        latitude: Number(target.latitude),
+        longitude: Number(target.longitude),
+        radiusMeters: target.radiusMeters,
+      };
+      const date = formatDateOnly(target.effectiveFrom);
+      if (previous && visible.has(date)) {
+        const text = arrivalTargetChangeNote(previous, snapshot);
+        if (text) push(date, name, text);
+      }
+      previous = snapshot;
+    }
+
     for (const override of member.workArrivalOverrides) {
       const date = formatDateOnly(override.date);
       if (!visible.has(date)) continue;
       const time = formatArrivalMinutes(override.arrivalMinutes);
       const note = override.note?.trim();
-      const text = note ? `${note} · ${time}` : `Arrive by ${time}`;
-      const list = byDate.get(date) ?? [];
-      list.push({ name, text });
-      byDate.set(date, list);
+      push(date, name, note ? `${note} · ${time}` : `Arrive by ${time}`);
     }
   }
   return sharedDateNotes(byDate, members.length);
@@ -215,7 +271,9 @@ export default async function GroupPage({
   const membership = await prisma.groupMember.findUnique({
     where: { groupId_userId: { groupId: id, userId: user.id } },
   });
-  if (!membership) notFound();
+  if (!membership || (await hasPendingInvite(id, user.id))) notFound();
+
+  await ensurePendingMemberships(id);
 
   const isOwner = membership.role === "OWNER";
 
@@ -324,10 +382,16 @@ export default async function GroupPage({
         },
         orderBy: { joinedAt: "asc" },
       },
+      invites: {
+        where: { status: "PENDING" },
+        select: { recipientId: true },
+      },
     },
   });
 
   if (!group) notFound();
+
+  const pendingRecipientIds = new Set(group.invites.map((invite) => invite.recipientId));
 
   const sleepTrackingEnabled = group.trackingKinds.includes(
     "SLEEP_TIME_GADGET_USAGE",
@@ -390,8 +454,20 @@ export default async function GroupPage({
           groupId={group.id}
           month={month}
           today={todayInTimeZone(DEFAULT_TIMEZONE)}
-          dateNotes={sleepDateNotes(group.members, dates)}
+          dateNotes={sleepDateNotes(pendingRecipientIds, group.members, dates)}
           members={group.members.map((member) => {
+          const displayName = noteName(member.user, pendingRecipientIds);
+          if (pendingRecipientIds.has(member.user.id)) {
+            return {
+              id: member.id,
+              displayName,
+              activityHidden: true,
+              cells: Object.fromEntries(
+                dates.map((date) => [date, { time: null, overdue: false, penaltyLabel: null }]),
+              ),
+              totalPenalty: "—",
+            };
+          }
           const schedules = member.sleepSchedules.map((schedule) => ({
             effectiveFrom: formatDateOnly(schedule.effectiveFrom),
             timezone: schedule.timezone,
@@ -423,7 +499,7 @@ export default async function GroupPage({
           });
           return {
             id: member.id,
-            displayName: displayNameOf(member.user),
+            displayName,
             cells: Object.fromEntries(
               Object.entries(charged.cells).map(([date, cell]) => [
                 date,
@@ -445,8 +521,19 @@ export default async function GroupPage({
           groupId={group.id}
           month={month}
           today={todayInTimeZone(DEFAULT_TIMEZONE)}
-          dateNotes={stepTargetDateNotes(group.members, dates)}
+          dateNotes={stepTargetDateNotes(pendingRecipientIds, group.members, dates)}
           members={group.members.map((member) => {
+            const displayName = noteName(member.user, pendingRecipientIds);
+            if (pendingRecipientIds.has(member.user.id)) {
+              return {
+                id: member.id,
+                displayName,
+                cells: Object.fromEntries(
+                  dates.map((date) => [date, { steps: null, below: false, penaltyLabel: null }]),
+                ),
+                totalPenalty: "—",
+              };
+            }
             const targets = member.stepTargets.map((target) => ({
               effectiveFrom: formatDateOnly(target.effectiveFrom),
               targetSteps: target.targetSteps,
@@ -493,7 +580,7 @@ export default async function GroupPage({
             );
             return {
               id: member.id,
-              displayName: displayNameOf(member.user),
+              displayName,
               cells,
               totalPenalty: formatPenaltyCharge(
                 totalCents,
@@ -510,8 +597,24 @@ export default async function GroupPage({
           groupId={group.id}
           month={month}
           today={todayInTimeZone(DEFAULT_TIMEZONE)}
-          dateNotes={arrivalDateNotes(group.members, dates)}
+          dateNotes={arrivalDateNotes(pendingRecipientIds, group.members, dates)}
           members={group.members.flatMap((member) => {
+            const displayName = noteName(member.user, pendingRecipientIds);
+            if (pendingRecipientIds.has(member.user.id)) {
+              return [
+                {
+                  id: member.id,
+                  displayName,
+                  cells: Object.fromEntries(
+                    dates.map((date) => [
+                      date,
+                      { time: null, miss: false, late: false, penaltyLabel: null },
+                    ]),
+                  ),
+                  totalPenalty: "—",
+                },
+              ];
+            }
             const targets = member.workArrivalTargets.flatMap((target) => {
               const days = parseWeekdayChecklist(target.days);
               if (!days) return [];
@@ -556,11 +659,12 @@ export default async function GroupPage({
               overrides,
               penalties,
               checkInByWorkDay,
+              today: todayInTimeZone(DEFAULT_TIMEZONE),
             });
             return [
               {
                 id: member.id,
-                displayName: displayNameOf(member.user),
+                displayName,
                 cells: Object.fromEntries(
                   Object.entries(charged.cells).map(([date, cell]) => [
                     date,

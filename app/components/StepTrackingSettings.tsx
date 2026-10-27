@@ -54,6 +54,7 @@ export type StepMemberView = {
   displayName: string;
   username: string | null;
   role: "OWNER" | "MEMBER";
+  pending?: boolean;
   targets: StepTargetView[];
   penalties: StepPenaltyView[];
 };

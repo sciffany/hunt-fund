@@ -3,6 +3,7 @@
 import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { hasPendingInvite } from "@/lib/pending-members";
 import { prisma } from "@/lib/prisma";
 import { requireOnboardedUser } from "@/lib/session";
 import { normalizeUsername, validateGroupName } from "@/lib/username";
@@ -125,21 +126,31 @@ export async function inviteToGroup(
   };
 
   try {
-    if (existing) {
-      await prisma.groupInvite.update({
-        where: { id: existing.id },
-        data: payload,
+    await prisma.$transaction(async (tx) => {
+      if (existing) {
+        await tx.groupInvite.update({
+          where: { id: existing.id },
+          data: payload,
+        });
+      } else {
+        await tx.groupInvite.create({
+          data: { groupId, recipientId: recipient.id, ...payload },
+        });
+      }
+      await tx.groupMember.create({
+        data: { groupId, userId: recipient.id, role: "MEMBER" },
       });
-    } else {
-      await prisma.groupInvite.create({
-        data: { groupId, recipientId: recipient.id, ...payload },
-      });
-    }
+    });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     ) {
+      const rawTarget = error.meta?.target;
+      const target = Array.isArray(rawTarget) ? rawTarget.join(" ") : String(rawTarget ?? "");
+      if (target.includes("GroupMember")) {
+        return { error: "That person is already in the group." };
+      }
       return { error: "They already have a pending invite." };
     }
     throw error;
@@ -151,7 +162,9 @@ export async function inviteToGroup(
   const label = recipient.username
     ? `@${recipient.username}`
     : recipient.email ?? identifier;
-  return { success: `Invite sent to ${label}.` };
+  return {
+    success: `Invite sent to ${label}. You can set their targets before they sign in.`,
+  };
 }
 
 export async function acceptInvite(formData: FormData) {
@@ -196,9 +209,14 @@ export async function declineInvite(formData: FormData) {
     return;
   }
 
-  await prisma.groupInvite.update({
-    where: { id: invite.id },
-    data: { status: "DECLINED", respondedAt: new Date() },
+  await prisma.$transaction(async (tx) => {
+    await tx.groupInvite.update({
+      where: { id: invite.id },
+      data: { status: "DECLINED", respondedAt: new Date() },
+    });
+    await tx.groupMember.deleteMany({
+      where: { groupId: invite.groupId, userId: user.id, role: "MEMBER" },
+    });
   });
 
   revalidatePath("/home");
@@ -213,6 +231,7 @@ export async function leaveGroup(formData: FormData) {
   const membership = await requireMembership(user.id, groupId);
   if (!membership) return;
   if (membership.role === "OWNER") return;
+  if (await hasPendingInvite(groupId, user.id)) return;
 
   await prisma.groupMember.delete({
     where: { groupId_userId: { groupId, userId: user.id } },

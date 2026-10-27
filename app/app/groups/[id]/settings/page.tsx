@@ -6,6 +6,7 @@ import { ConfirmForm } from "@/components/ConfirmForm";
 import { InviteForm } from "@/components/forms";
 import { SleepTrackingSettings } from "@/components/SleepTrackingSettings";
 import { deleteGroup } from "@/lib/actions/groups";
+import { ensurePendingMemberships, pendingMemberLabel } from "@/lib/pending-members";
 import { prisma } from "@/lib/prisma";
 import { displayNameOf, requireOnboardedUser } from "@/lib/session";
 import { formatPenaltyAmount } from "@/lib/penalty";
@@ -39,6 +40,8 @@ export default async function GroupSettingsPage({
   });
   if (!membership || membership.role !== "OWNER") notFound();
 
+  await ensurePendingMemberships(id);
+
   const group = await prisma.group.findUnique({
     where: { id },
     include: {
@@ -68,7 +71,13 @@ export default async function GroupSettingsPage({
         where: { status: "PENDING" },
         include: {
           recipient: {
-            select: { username: true, displayName: true, name: true, email: true },
+            select: {
+              id: true,
+              username: true,
+              displayName: true,
+              name: true,
+              email: true,
+            },
           },
           sender: { select: { username: true } },
         },
@@ -78,6 +87,8 @@ export default async function GroupSettingsPage({
   });
 
   if (!group) notFound();
+
+  const pendingRecipientIds = new Set(group.invites.map((invite) => invite.recipient.id));
 
   const sleepTrackingEnabled = group.trackingKinds.includes(
     "SLEEP_TIME_GADGET_USAGE",
@@ -120,21 +131,32 @@ export default async function GroupSettingsPage({
       <section className="mt-8">
         <h2 className="text-sm font-medium text-neutral-500">Members</h2>
         <ul className="mt-3 divide-y divide-neutral-200 rounded-md border border-neutral-200 bg-white">
-          {group.members.map((member) => (
+          {group.members.map((member) => {
+            const pending = pendingRecipientIds.has(member.user.id);
+            return (
             <li key={member.id} className="flex items-center justify-between px-4 py-3">
               <div>
-                <p className="text-sm font-medium">{displayNameOf(member.user)}</p>
+                <p className="text-sm font-medium">
+                  {pending ? pendingMemberLabel(member.user) : displayNameOf(member.user)}
+                </p>
                 <p className="text-xs text-neutral-500">
-                  {member.user.username
-                    ? `@${member.user.username}`
-                    : member.user.email ?? "No username yet"}
+                  {pending
+                    ? "Hasn’t accepted yet"
+                    : member.user.username
+                      ? `@${member.user.username}`
+                      : member.user.email ?? "No username yet"}
                 </p>
               </div>
               <span className="text-xs text-neutral-500">
-                {member.role === "OWNER" ? "Owner" : "Member"}
+                {member.role === "OWNER"
+                  ? "Owner"
+                  : pendingRecipientIds.has(member.user.id)
+                    ? "Invited"
+                    : "Member"}
               </span>
             </li>
-          ))}
+            );
+          })}
         </ul>
       </section>
 
@@ -147,9 +169,12 @@ export default async function GroupSettingsPage({
         defaultDate={todayInTimeZone(DEFAULT_TIMEZONE)}
         members={group.members.map((member) => ({
           id: member.id,
-          displayName: displayNameOf(member.user),
+          displayName: pendingRecipientIds.has(member.user.id)
+            ? pendingMemberLabel(member.user)
+            : displayNameOf(member.user),
           username: member.user.username,
           role: member.role,
+          pending: pendingRecipientIds.has(member.user.id),
           schedules: member.sleepSchedules.map((schedule) => ({
             id: schedule.id,
             effectiveFrom: formatDateOnly(schedule.effectiveFrom),
@@ -173,9 +198,12 @@ export default async function GroupSettingsPage({
         }))}
         stepMembers={group.members.map((member) => ({
           id: member.id,
-          displayName: displayNameOf(member.user),
+          displayName: pendingRecipientIds.has(member.user.id)
+            ? pendingMemberLabel(member.user)
+            : displayNameOf(member.user),
           username: member.user.username,
           role: member.role,
+          pending: pendingRecipientIds.has(member.user.id),
           targets: member.stepTargets.map((target) => ({
             id: target.id,
             effectiveFrom: formatDateOnly(target.effectiveFrom),
@@ -191,9 +219,12 @@ export default async function GroupSettingsPage({
         }))}
         arrivalMembers={group.members.map((member) => ({
           id: member.id,
-          displayName: displayNameOf(member.user),
+          displayName: pendingRecipientIds.has(member.user.id)
+            ? pendingMemberLabel(member.user)
+            : displayNameOf(member.user),
           username: member.user.username,
           role: member.role,
+          pending: pendingRecipientIds.has(member.user.id),
           targets: member.workArrivalTargets.map((target) => ({
             id: target.id,
             effectiveFrom: formatDateOnly(target.effectiveFrom),
@@ -226,8 +257,8 @@ export default async function GroupSettingsPage({
       <section className="mt-8">
         <h2 className="text-sm font-medium text-neutral-500">Invite someone</h2>
         <p className="mt-1 text-sm text-neutral-600">
-          They’ll be added after they accept. If they don’t have an account yet,
-          we’ll save their email so they can join when they sign up.
+          They’re added now, so you can set their sleep, steps, and work arrival
+          before they sign in. They’ll see the group after they accept.
         </p>
         <div className="mt-4 rounded-md border border-neutral-200 bg-white p-4">
           <InviteForm groupId={group.id} />
@@ -242,12 +273,10 @@ export default async function GroupSettingsPage({
               <li key={invite.id} className="flex items-center justify-between px-4 py-3">
                 <div>
                   <p className="text-sm font-medium">
-                    {displayNameOf(invite.recipient)}
+                    {pendingMemberLabel(invite.recipient)}
                   </p>
                   <p className="text-xs text-neutral-500">
-                    {invite.recipient.username
-                      ? `@${invite.recipient.username}`
-                      : "Not signed up yet"}
+                    {invite.recipient.username ? "Hasn’t accepted yet" : "Not signed up yet"}
                     {invite.sender.username
                       ? ` · invited by @${invite.sender.username}`
                       : ""}

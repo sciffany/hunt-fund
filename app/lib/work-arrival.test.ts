@@ -1,9 +1,11 @@
 import { expect, test } from "vitest";
 import { localDateTime } from "@/lib/sleep";
 import {
+  arrivalTargetChangeNote,
   chargeWorkArrivalMonth,
   defaultWorkdays,
   distanceMeters,
+  checkInFeedback,
   earlierCheckIn,
   formatLatitude,
   isInsideRadius,
@@ -83,6 +85,29 @@ test("a missing check-in on a counted day owes the cap", () => {
     late: false,
     charge: "$5.00",
   });
+});
+
+test("a counted day after today owes nothing until it arrives", () => {
+  const tomorrow = "2026-10-28";
+  const result = chargeWorkArrivalMonth({
+    dates: [DAY, tomorrow],
+    targets: [target()],
+    overrides: [],
+    penalties: [penalty()],
+    checkInByWorkDay: new Map([
+      [DAY, null],
+      [tomorrow, null],
+    ]),
+    today: DAY,
+  });
+  expect(result.cells[DAY]).toMatchObject({ miss: true, charge: "$5.00" });
+  expect(result.cells[tomorrow]).toEqual({
+    time: null,
+    miss: false,
+    late: false,
+    charge: null,
+  });
+  expect(result.totalCharge).toBe("$5.00");
 });
 
 test("a check-in inside the radius and on time owes nothing", () => {
@@ -251,8 +276,78 @@ test("the newest covering target sets the work day", () => {
   ).toBe("America/New_York");
 });
 
+test("an identical arrival target is not a date note", () => {
+  const first = target();
+  expect(arrivalTargetChangeNote(first, { ...first })).toBeNull();
+});
+
+test("a later arrival time is noted like a bedtime change", () => {
+  expect(arrivalTargetChangeNote(target(), target(defaultWorkdays(), 9 * 60 + 30))).toBe(
+    "Arrive by 9:30 AM",
+  );
+});
+
+test("a changed weekday set is noted with the new days", () => {
+  const days = defaultWorkdays();
+  days[1] = false;
+  expect(arrivalTargetChangeNote(target(), target(days))).toBe(
+    "Arrive by 9:00 AM · Tue, Wed, Thu, Fri",
+  );
+});
+
+test("a moved place is noted on its own", () => {
+  const next = target();
+  next.latitude = 1.4;
+  expect(arrivalTargetChangeNote(target(), next)).toBe("Place");
+});
+
+test("a radius change is noted in meters", () => {
+  const next = target();
+  next.radiusMeters = 250;
+  expect(arrivalTargetChangeNote(target(), next)).toBe("Radius 250 m");
+});
+
+test("a moved place with a new radius includes both", () => {
+  const next = target();
+  next.longitude = 104;
+  next.radiusMeters = 1500;
+  expect(arrivalTargetChangeNote(target(), next)).toBe("Place · 1,500 m");
+});
+
 test("a device coordinate round-trips into a stored latitude", () => {
   expect(parseLatitude(formatLatitude(1.35208337))).toBe(1.3520834);
+});
+
+test("a new check-in at the place is worth a celebration", () => {
+  expect(checkInFeedback({ keptEarlier: false, insidePlace: true })).toEqual({
+    success: "Checked in.",
+    celebrate: true,
+  });
+});
+
+test("a new check-in outside the place says so", () => {
+  expect(checkInFeedback({ keptEarlier: false, insidePlace: false })).toEqual({
+    warning: "Checked in outside the place.",
+  });
+});
+
+test("a new check-in with no place stays a plain success", () => {
+  expect(checkInFeedback({ keptEarlier: false, insidePlace: null })).toEqual({
+    success: "Checked in.",
+  });
+});
+
+test("an earlier check-in outside the place is called out", () => {
+  expect(checkInFeedback({ keptEarlier: true, insidePlace: false })).toEqual({
+    warning:
+      "An earlier check-in is already saved for that day, outside the place.",
+  });
+});
+
+test("an earlier check-in at the place does not celebrate again", () => {
+  expect(checkInFeedback({ keptEarlier: true, insidePlace: true })).toEqual({
+    success: "An earlier check-in is already saved for that day.",
+  });
 });
 
 test("an earlier check-in sticks", () => {

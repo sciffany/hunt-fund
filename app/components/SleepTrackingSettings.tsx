@@ -85,6 +85,7 @@ export type SleepMemberView = {
   displayName: string;
   username: string | null;
   role: "OWNER" | "MEMBER";
+  pending?: boolean;
   schedules: SleepScheduleView[];
   overrides: SleepOverrideView[];
   penalties: SleepPenaltyView[];

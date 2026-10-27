@@ -26,8 +26,8 @@ fi
 
 # shellcheck disable=SC1091
 source .venv/bin/activate
-pip install --quiet --upgrade pip
-pip install --quiet -r requirements.txt
+.venv/bin/python -m pip install --quiet --upgrade pip
+.venv/bin/python -m pip install --quiet -r requirements.txt
 deactivate
 
 mkdir -p "$PLIST_DIR" "$LOG_DIR"

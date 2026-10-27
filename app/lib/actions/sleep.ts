@@ -62,9 +62,11 @@ export async function updateGroupTracking(
 
   const sleepEnabled = formData.get("sleepTracking") === "on";
   const stepEnabled = formData.get("stepTracking") === "on";
+  const arrivalEnabled = formData.get("workArrivalTracking") === "on";
   const trackingKinds = [
     ...(sleepEnabled ? (["SLEEP_TIME_GADGET_USAGE"] as const) : []),
     ...(stepEnabled ? (["DAILY_STEPS"] as const) : []),
+    ...(arrivalEnabled ? (["WORK_ARRIVAL_TIME"] as const) : []),
   ];
   await prisma.group.update({
     where: { id: groupId },
@@ -73,16 +75,32 @@ export async function updateGroupTracking(
 
   revalidateGroup(groupId);
   return {
-    success: trackingMessage(sleepEnabled, stepEnabled),
+    success: trackingMessage(sleepEnabled, stepEnabled, arrivalEnabled),
   };
 }
 
-function trackingMessage(sleepEnabled: boolean, stepEnabled: boolean) {
+function trackingMessage(
+  sleepEnabled: boolean,
+  stepEnabled: boolean,
+  arrivalEnabled: boolean,
+) {
+  if (sleepEnabled && stepEnabled && arrivalEnabled) {
+    return "Sleep, daily step, and work arrival tracking are on.";
+  }
   if (sleepEnabled && stepEnabled) {
     return "Sleep and daily step tracking are on.";
   }
+  if (sleepEnabled && arrivalEnabled) {
+    return "Sleep and work arrival tracking are on.";
+  }
+  if (stepEnabled && arrivalEnabled) {
+    return "Daily step and work arrival tracking are on.";
+  }
   if (sleepEnabled) return "Sleep tracking is on. Customize bedtimes below.";
   if (stepEnabled) return "Daily step tracking is on. Set targets below.";
+  if (arrivalEnabled) {
+    return "Work arrival tracking is on. Set a target, place, and penalty below.";
+  }
   return "Tracking is off.";
 }
 

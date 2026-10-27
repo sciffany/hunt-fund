@@ -335,6 +335,34 @@ function zonedWallTimeToUtc(
   return new Date(utc);
 }
 
+/** Wall-clock time on a calendar date in an IANA timezone, as an absolute instant. */
+export function localDateTime(
+  dateOnly: string,
+  minutesFromMidnight: number,
+  timeZone: string,
+): Date {
+  const parsed = parseDateOnly(dateOnly);
+  if (!parsed) {
+    throw new Error(`Invalid date: ${dateOnly}`);
+  }
+  if (
+    !Number.isInteger(minutesFromMidnight) ||
+    minutesFromMidnight < 0 ||
+    minutesFromMidnight > 1439
+  ) {
+    throw new Error(`Invalid minutes from midnight: ${minutesFromMidnight}`);
+  }
+
+  return zonedWallTimeToUtc(
+    parsed.getUTCFullYear(),
+    parsed.getUTCMonth() + 1,
+    parsed.getUTCDate(),
+    Math.floor(minutesFromMidnight / 60),
+    minutesFromMidnight % 60,
+    timeZone,
+  );
+}
+
 export function bedtimeInstant(
   nightDate: string,
   halfHoursPast8pm: number,

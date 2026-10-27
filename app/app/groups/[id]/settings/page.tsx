@@ -17,6 +17,10 @@ import {
   parseSleepTimes,
   todayInTimeZone,
 } from "@/lib/sleep";
+import {
+  defaultWorkdays,
+  parseWeekdayChecklist,
+} from "@/lib/work-arrival";
 
 export const metadata: Metadata = {
   title: "Group settings",
@@ -54,6 +58,9 @@ export default async function GroupSettingsPage({
           sleepPenalties: { orderBy: { effectiveFrom: "asc" } },
           stepTargets: { orderBy: { effectiveFrom: "asc" } },
           stepPenalties: { orderBy: { effectiveFrom: "asc" } },
+          workArrivalTargets: { orderBy: { effectiveFrom: "asc" } },
+          workArrivalOverrides: { orderBy: { date: "asc" } },
+          workArrivalPenalties: { orderBy: { effectiveFrom: "asc" } },
         },
         orderBy: { joinedAt: "asc" },
       },
@@ -76,6 +83,7 @@ export default async function GroupSettingsPage({
     "SLEEP_TIME_GADGET_USAGE",
   );
   const stepTrackingEnabled = group.trackingKinds.includes("DAILY_STEPS");
+  const arrivalTrackingEnabled = group.trackingKinds.includes("WORK_ARRIVAL_TIME");
 
   return (
     <AppShell>
@@ -134,6 +142,7 @@ export default async function GroupSettingsPage({
         groupId={group.id}
         sleepTrackingEnabled={sleepTrackingEnabled}
         stepTrackingEnabled={stepTrackingEnabled}
+        arrivalTrackingEnabled={arrivalTrackingEnabled}
         timeZones={listTimeZones()}
         defaultDate={todayInTimeZone(DEFAULT_TIMEZONE)}
         members={group.members.map((member) => ({
@@ -178,6 +187,38 @@ export default async function GroupSettingsPage({
             amount: formatPenaltyAmount(penalty.amount),
             unit: penalty.unit,
             unitLabel: penalty.unitLabel,
+          })),
+        }))}
+        arrivalMembers={group.members.map((member) => ({
+          id: member.id,
+          displayName: displayNameOf(member.user),
+          username: member.user.username,
+          role: member.role,
+          targets: member.workArrivalTargets.map((target) => ({
+            id: target.id,
+            effectiveFrom: formatDateOnly(target.effectiveFrom),
+            timezone: target.timezone,
+            arrivalMinutes: target.arrivalMinutes,
+            days: parseWeekdayChecklist(target.days) ?? defaultWorkdays(),
+            latitude: target.latitude.toString(),
+            longitude: target.longitude.toString(),
+            radiusMeters: target.radiusMeters,
+          })),
+          overrides: member.workArrivalOverrides.map((override) => ({
+            id: override.id,
+            date: formatDateOnly(override.date),
+            timezone: override.timezone,
+            arrivalMinutes: override.arrivalMinutes,
+            note: override.note,
+          })),
+          penalties: member.workArrivalPenalties.map((penalty) => ({
+            id: penalty.id,
+            effectiveFrom: formatDateOnly(penalty.effectiveFrom),
+            amount: formatPenaltyAmount(penalty.amount),
+            unit: penalty.unit,
+            unitLabel: penalty.unitLabel,
+            blockMinutes: penalty.blockMinutes,
+            cap: formatPenaltyAmount(penalty.cap),
           })),
         }))}
       />

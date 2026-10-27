@@ -22,6 +22,7 @@ enum InviteStatus {
 enum TrackingKind {
   SLEEP_TIME_GADGET_USAGE
   DAILY_STEPS
+  WORK_ARRIVAL_TIME
 }
 
 enum PenaltyUnit {
@@ -61,6 +62,7 @@ model User {
   sleepNights     SleepNight[]
   stepEvents      StepEvent[]
   stepNights      StepNight[]
+  workArrivalDays WorkArrivalDay[]
 }
 
 model Account {
@@ -125,11 +127,14 @@ model GroupMember {
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  sleepSchedules SleepSchedule[]
-  sleepOverrides SleepOverride[]
-  sleepPenalties SleepPenalty[]
-  stepTargets    StepTarget[]
-  stepPenalties  StepPenalty[]
+  sleepSchedules       SleepSchedule[]
+  sleepOverrides       SleepOverride[]
+  sleepPenalties       SleepPenalty[]
+  stepTargets          StepTarget[]
+  stepPenalties        StepPenalty[]
+  workArrivalTargets   WorkArrivalTarget[]
+  workArrivalOverrides WorkArrivalOverride[]
+  workArrivalPenalties WorkArrivalPenalty[]
 
   @@unique([groupId, userId])
 }
@@ -265,6 +270,82 @@ model StepNight {
 
   @@unique([userId, night])
   @@index([night(sort: Desc)])
+}
+
+/// One check-in per user per work day. `arrivedAt` is the server clock.
+/// `workDay` is that instant's calendar date in the member's covering
+/// arrival-target timezone, or Asia/Singapore when they have none.
+model WorkArrivalDay {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workDay    DateTime  @db.Date
+  arrivedAt  DateTime?
+  latitude   Decimal?  @db.Decimal(10, 7)
+  longitude  Decimal?  @db.Decimal(10, 7)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@unique([userId, workDay])
+  @@index([workDay(sort: Desc)])
+}
+
+model WorkArrivalTarget {
+  id              String      @id @default(cuid())
+  groupMemberId   String
+  groupMember     GroupMember @relation(fields: [groupMemberId], references: [id], onDelete: Cascade)
+  /// Calendar date this arrival target starts on.
+  effectiveFrom   DateTime    @db.Date
+  /// IANA timezone the clock time and work-day midnight are local to.
+  timezone        String
+  /// Minutes from local midnight, 0–1439.
+  arrivalMinutes  Int
+  /// JSON object keyed by JS weekday 0–6 (Sun=0). True means that weekday counts.
+  days            Json
+  latitude        Decimal     @db.Decimal(10, 7)
+  longitude       Decimal     @db.Decimal(10, 7)
+  radiusMeters    Int
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@unique([groupMemberId, effectiveFrom])
+}
+
+model WorkArrivalOverride {
+  id             String      @id @default(cuid())
+  groupMemberId  String
+  groupMember    GroupMember @relation(fields: [groupMemberId], references: [id], onDelete: Cascade)
+  /// Work-day calendar date this one-off arrival time applies to.
+  date           DateTime    @db.Date
+  timezone       String
+  /// Minutes from local midnight, 0–1439.
+  arrivalMinutes Int
+  note           String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([groupMemberId, date])
+}
+
+model WorkArrivalPenalty {
+  id             String      @id @default(cuid())
+  groupMemberId  String
+  groupMember    GroupMember @relation(fields: [groupMemberId], references: [id], onDelete: Cascade)
+  /// Calendar date this penalty rate starts on.
+  effectiveFrom  DateTime    @db.Date
+  /// Charge per lateness block.
+  amount         Decimal     @db.Decimal(10, 2)
+  unit           PenaltyUnit
+  /// Required when unit is OTHER; ignored otherwise.
+  unitLabel      String?
+  /// Minutes in one lateness block. Partial blocks round up.
+  blockMinutes   Int         @default(10)
+  /// Most one counted work day can owe, in the same unit as amount.
+  cap            Decimal     @db.Decimal(10, 2)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([groupMemberId, effectiveFrom])
 }
 
 model GroupInvite {

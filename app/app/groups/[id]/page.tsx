@@ -8,6 +8,9 @@ import {
   GroupMonthStepsDashboard,
   type StepsDashboardCell,
 } from "@/components/GroupMonthStepsDashboard";
+import {
+  GroupMonthWorkArrivalDashboard,
+} from "@/components/GroupMonthWorkArrivalDashboard";
 import { leaveGroup } from "@/lib/actions/groups";
 import {
   currentYearMonth,
@@ -37,6 +40,12 @@ import {
   type SleepTimesByWeekday,
   type Weekday,
 } from "@/lib/sleep";
+import {
+  chargeWorkArrivalMonth,
+  checkInPoint,
+  formatArrivalMinutes,
+  parseWeekdayChecklist,
+} from "@/lib/work-arrival";
 
 function sharedDateNotes(
   byDate: Map<string, { name: string; text: string }[]>,
@@ -159,6 +168,35 @@ function stepTargetDateNotes(
   return sharedDateNotes(byDate, members.length);
 }
 
+function arrivalDateNotes(
+  members: {
+    user: Parameters<typeof displayNameOf>[0];
+    workArrivalOverrides: {
+      date: Date;
+      arrivalMinutes: number;
+      note: string | null;
+    }[];
+  }[],
+  dates: string[],
+): Record<string, string[]> {
+  const visible = new Set(dates);
+  const byDate = new Map<string, { name: string; text: string }[]>();
+  for (const member of members) {
+    const name = displayNameOf(member.user);
+    for (const override of member.workArrivalOverrides) {
+      const date = formatDateOnly(override.date);
+      if (!visible.has(date)) continue;
+      const time = formatArrivalMinutes(override.arrivalMinutes);
+      const note = override.note?.trim();
+      const text = note ? `${note} · ${time}` : `Arrive by ${time}`;
+      const list = byDate.get(date) ?? [];
+      list.push({ name, text });
+      byDate.set(date, list);
+    }
+  }
+  return sharedDateNotes(byDate, members.length);
+}
+
 export const metadata: Metadata = {
   title: "Group",
 };
@@ -207,6 +245,15 @@ export default async function GroupPage({
                 where: { night: { gte: monthStart, lte: monthEnd } },
                 select: { night: true, steps: true },
               },
+              workArrivalDays: {
+                where: { workDay: { gte: monthStart, lte: monthEnd } },
+                select: {
+                  workDay: true,
+                  arrivedAt: true,
+                  latitude: true,
+                  longitude: true,
+                },
+              },
             },
           },
           sleepSchedules: {
@@ -243,6 +290,37 @@ export default async function GroupPage({
             },
             orderBy: { effectiveFrom: "asc" },
           },
+          workArrivalTargets: {
+            select: {
+              effectiveFrom: true,
+              timezone: true,
+              arrivalMinutes: true,
+              days: true,
+              latitude: true,
+              longitude: true,
+              radiusMeters: true,
+            },
+            orderBy: { effectiveFrom: "asc" },
+          },
+          workArrivalOverrides: {
+            select: {
+              date: true,
+              timezone: true,
+              arrivalMinutes: true,
+              note: true,
+            },
+          },
+          workArrivalPenalties: {
+            select: {
+              effectiveFrom: true,
+              amount: true,
+              unit: true,
+              unitLabel: true,
+              blockMinutes: true,
+              cap: true,
+            },
+            orderBy: { effectiveFrom: "asc" },
+          },
         },
         orderBy: { joinedAt: "asc" },
       },
@@ -255,6 +333,9 @@ export default async function GroupPage({
     "SLEEP_TIME_GADGET_USAGE",
   );
   const stepTrackingEnabled = group.trackingKinds.includes("DAILY_STEPS");
+  const arrivalTrackingEnabled = group.trackingKinds.includes(
+    "WORK_ARRIVAL_TIME",
+  );
   const memberCountLabel = `${group.members.length} ${
     group.members.length === 1 ? "member" : "members"
   }`;
@@ -293,14 +374,14 @@ export default async function GroupPage({
         )}
       </div>
 
-      {sleepTrackingEnabled || stepTrackingEnabled ? (
+      {sleepTrackingEnabled || stepTrackingEnabled || arrivalTrackingEnabled ? (
         <DashboardMonthNav groupId={group.id} month={month} />
       ) : (
         <p className="mt-8 rounded-xl border border-dashed border-neutral-200 bg-white px-4 py-8 text-center text-sm text-neutral-500">
           No tracking is enabled yet.
           {isOwner
-            ? " Turn on sleep or step tracking in Settings."
-            : " Ask the group owner to turn on sleep or step tracking."}
+            ? " Turn on sleep, step, or work arrival tracking in Settings."
+            : " Ask the group owner to turn on sleep, step, or work arrival tracking."}
         </p>
       )}
 
@@ -420,6 +501,80 @@ export default async function GroupPage({
                 latestPenalty?.unitLabel,
               ),
             };
+          })}
+        />
+      ) : null}
+
+      {arrivalTrackingEnabled ? (
+        <GroupMonthWorkArrivalDashboard
+          groupId={group.id}
+          month={month}
+          today={todayInTimeZone(DEFAULT_TIMEZONE)}
+          dateNotes={arrivalDateNotes(group.members, dates)}
+          members={group.members.flatMap((member) => {
+            const targets = member.workArrivalTargets.flatMap((target) => {
+              const days = parseWeekdayChecklist(target.days);
+              if (!days) return [];
+              return [
+                {
+                  effectiveFrom: formatDateOnly(target.effectiveFrom),
+                  timezone: target.timezone,
+                  arrivalMinutes: target.arrivalMinutes,
+                  days,
+                  latitude: Number(target.latitude),
+                  longitude: Number(target.longitude),
+                  radiusMeters: target.radiusMeters,
+                },
+              ];
+            });
+            const overrides = member.workArrivalOverrides.map((override) => ({
+              date: formatDateOnly(override.date),
+              timezone: override.timezone,
+              arrivalMinutes: override.arrivalMinutes,
+            }));
+            const penalties = member.workArrivalPenalties.map((penalty) => ({
+              effectiveFrom: formatDateOnly(penalty.effectiveFrom),
+              amount: formatPenaltyAmount(penalty.amount),
+              unit: penalty.unit,
+              unitLabel: penalty.unitLabel,
+              blockMinutes: penalty.blockMinutes,
+              cap: formatPenaltyAmount(penalty.cap),
+            }));
+            const checkInByWorkDay = new Map(
+              member.user.workArrivalDays.map((day) => [
+                formatDateOnly(day.workDay),
+                checkInPoint(
+                  day.arrivedAt,
+                  day.latitude === null ? null : Number(day.latitude),
+                  day.longitude === null ? null : Number(day.longitude),
+                ),
+              ]),
+            );
+            const charged = chargeWorkArrivalMonth({
+              dates,
+              targets,
+              overrides,
+              penalties,
+              checkInByWorkDay,
+            });
+            return [
+              {
+                id: member.id,
+                displayName: displayNameOf(member.user),
+                cells: Object.fromEntries(
+                  Object.entries(charged.cells).map(([date, cell]) => [
+                    date,
+                    {
+                      time: cell.time,
+                      miss: cell.miss,
+                      late: cell.late,
+                      penaltyLabel: cell.charge,
+                    },
+                  ]),
+                ),
+                totalPenalty: charged.totalCharge,
+              },
+            ];
           })}
         />
       ) : null}

@@ -13,6 +13,10 @@ import {
   StepTrackingSettings,
   type StepMemberView,
 } from "@/components/StepTrackingSettings";
+import {
+  WorkArrivalSettings,
+  type WorkArrivalMemberView,
+} from "@/components/WorkArrivalSettings";
 import type { ActionState } from "@/lib/actions/profile";
 import {
   deleteSleepOverride,
@@ -144,10 +148,12 @@ function TrackingToggle({
   groupId,
   sleepEnabled,
   stepEnabled,
+  arrivalEnabled,
 }: {
   groupId: string;
   sleepEnabled: boolean;
   stepEnabled: boolean;
+  arrivalEnabled: boolean;
 }) {
   const [state, action, pending] = useActionState(updateGroupTracking, {});
 
@@ -183,6 +189,22 @@ function TrackingToggle({
           <span className="mt-1 block text-xs text-neutral-500">
             When this is on, you can set each member’s step target and penalty.
             Unchecking hides the editor but keeps saved targets.
+          </span>
+        </span>
+      </label>
+      <label className="flex items-start gap-3 text-sm">
+        <input
+          type="checkbox"
+          name="workArrivalTracking"
+          value="on"
+          defaultChecked={arrivalEnabled}
+          className="mt-0.5"
+        />
+        <span>
+          <span className="font-medium">Work arrival time</span>
+          <span className="mt-1 block text-xs text-neutral-500">
+            When this is on, you can set each member’s arrival time, place, and
+            penalty. Unchecking hides the editor but keeps saved targets.
           </span>
         </span>
       </label>
@@ -620,16 +642,20 @@ export function SleepTrackingSettings({
   groupId,
   sleepTrackingEnabled,
   stepTrackingEnabled,
+  arrivalTrackingEnabled,
   members,
   stepMembers,
+  arrivalMembers,
   timeZones,
   defaultDate,
 }: {
   groupId: string;
   sleepTrackingEnabled: boolean;
   stepTrackingEnabled: boolean;
+  arrivalTrackingEnabled: boolean;
   members: SleepMemberView[];
   stepMembers: StepMemberView[];
+  arrivalMembers: WorkArrivalMemberView[];
   timeZones: string[];
   defaultDate: string;
 }) {
@@ -641,10 +667,11 @@ export function SleepTrackingSettings({
       </p>
       <div className="mt-4 rounded-md border border-neutral-200 bg-white p-4">
         <TrackingToggle
-          key={`${sleepTrackingEnabled}-${stepTrackingEnabled}`}
+          key={`${sleepTrackingEnabled}-${stepTrackingEnabled}-${arrivalTrackingEnabled}`}
           groupId={groupId}
           sleepEnabled={sleepTrackingEnabled}
           stepEnabled={stepTrackingEnabled}
+          arrivalEnabled={arrivalTrackingEnabled}
         />
       </div>
 
@@ -674,6 +701,15 @@ export function SleepTrackingSettings({
         <StepTrackingSettings
           groupId={groupId}
           members={stepMembers}
+          defaultDate={defaultDate}
+        />
+      ) : null}
+
+      {arrivalTrackingEnabled ? (
+        <WorkArrivalSettings
+          groupId={groupId}
+          members={arrivalMembers}
+          timeZones={timeZones}
           defaultDate={defaultDate}
         />
       ) : null}

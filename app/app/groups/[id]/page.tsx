@@ -47,6 +47,7 @@ import {
 } from "@/lib/sleep";
 import {
   arrivalTargetChangeNote,
+  arrivalTargetStartNote,
   chargeWorkArrivalMonth,
   checkInPoint,
   formatArrivalMinutes,
@@ -235,8 +236,10 @@ function arrivalDateNotes(
         radiusMeters: target.radiusMeters,
       };
       const date = formatDateOnly(target.effectiveFrom);
-      if (previous && visible.has(date)) {
-        const text = arrivalTargetChangeNote(previous, snapshot);
+      if (visible.has(date)) {
+        const text = previous
+          ? arrivalTargetChangeNote(previous, snapshot)
+          : arrivalTargetStartNote(snapshot);
         if (text) push(date, name, text);
       }
       previous = snapshot;

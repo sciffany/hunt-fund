@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import { localDateTime } from "@/lib/sleep";
 import {
   arrivalTargetChangeNote,
+  arrivalTargetStartNote,
   chargeWorkArrivalMonth,
   defaultWorkdays,
   distanceMeters,
@@ -274,6 +275,12 @@ test("the newest covering target sets the work day", () => {
       instant,
     ).timezone,
   ).toBe("America/New_York");
+});
+
+test("the first arrival target states the starting rule", () => {
+  expect(arrivalTargetStartNote(target())).toBe(
+    "Arrive by 9:00 AM · Mon, Tue, Wed, Thu, Fri · Place · 100 m",
+  );
 });
 
 test("an identical arrival target is not a date note", () => {

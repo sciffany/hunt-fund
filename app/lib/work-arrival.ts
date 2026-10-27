@@ -143,6 +143,13 @@ function countedWeekdays(days: WeekdayChecklist): string {
   return labels.length === 0 ? "no weekdays" : labels.join(", ");
 }
 
+/** Date-column note for the first arrival target, on the day it takes effect. */
+export function arrivalTargetStartNote(
+  target: Pick<WorkArrivalTargetForCharge, "arrivalMinutes" | "days" | "radiusMeters">,
+): string {
+  return `Arrive by ${formatArrivalMinutes(target.arrivalMinutes)} · ${countedWeekdays(target.days)} · Place · ${target.radiusMeters.toLocaleString("en-US")} m`;
+}
+
 /**
  * Short date-column note for a new arrival target that differs from the one
  * before it. States the new rule, the same way a bedtime or step-target change

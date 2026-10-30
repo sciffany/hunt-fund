@@ -87,7 +87,7 @@ export function DashboardMetricCell({
 }) {
   return (
     <div
-      className={`flex h-full min-h-11 items-center justify-end overflow-hidden px-1 sm:min-h-14 sm:px-3 ${flagged ? "bg-rose-50" : ""} ${className}`}
+      className={`flex h-full min-h-11 items-center justify-end overflow-hidden px-0.5 sm:min-h-14 sm:px-1.5 ${flagged ? "bg-rose-50" : ""} ${className}`}
     >
       {value === null ? (
         <span className="text-neutral-300">—</span>
@@ -101,7 +101,7 @@ export function DashboardMetricCell({
             {value}
           </span>
           {flagged && penaltyLabel ? (
-            <span className="mt-0.5 block truncate text-[10px] tabular-nums text-rose-700 sm:text-xs">
+            <span className="mt-0.5 block truncate text-[10px] tabular-nums text-rose-700">
               {penaltyLabel}
             </span>
           ) : null}
@@ -133,25 +133,25 @@ export function DashboardMonthTable({
   footerValues: string[];
 }) {
   const dates = datesInMonth(month);
-  const hasDateNotes = dates.some((date) => (dateNotes?.[date]?.length ?? 0) > 0);
-  const dateColumnWidth = hasDateNotes ? "14rem" : "8rem";
-  const fitsOnScreen = members.length <= 3;
+  // Up to five people share the screen. More than that scroll, with each
+  // person at least --member-col wide. --date-col is narrower on phones.
+  const fitsOnScreen = members.length <= 5;
 
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto @container">
       <table
-        className="dashboard-month-table w-full table-fixed border-collapse text-[11px] sm:text-sm"
+        className="dashboard-month-table w-full table-fixed border-collapse text-[11px] sm:text-xs"
         data-fit={fitsOnScreen ? "true" : undefined}
         style={
           fitsOnScreen
             ? undefined
             : {
-                minWidth: `calc(${dateColumnWidth} + ${members.length * 9}rem)`,
+                minWidth: `calc(var(--date-col) + ${members.length} * var(--member-col))`,
               }
         }
       >
         <colgroup>
-          <col className="dashboard-date-col" style={{ width: dateColumnWidth }} />
+          <col className="dashboard-date-col" style={{ width: "var(--date-col)" }} />
           {members.map((member) => (
             <col key={member.id} />
           ))}
@@ -160,7 +160,7 @@ export function DashboardMonthTable({
           <tr className="border-b border-neutral-300">
             <th
               scope="col"
-              className="sticky left-0 z-20 bg-neutral-50 px-1 py-1.5 text-left text-[10px] font-medium uppercase tracking-wide text-neutral-500 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] sm:px-3 sm:py-2.5 sm:text-[11px] sm:tracking-wider"
+              className="sticky left-0 z-20 max-w-[var(--date-col)] overflow-hidden bg-neutral-50 px-0.5 py-1.5 text-left text-[9px] font-medium uppercase tracking-tight text-neutral-500 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] sm:py-2.5 sm:text-[10px]"
             >
               Date
             </th>
@@ -169,7 +169,7 @@ export function DashboardMonthTable({
                 key={member.id}
                 scope="col"
                 title={member.displayName}
-                className="min-w-0 border-l border-neutral-200 bg-neutral-50 px-1 py-1.5 text-left text-[11px] font-medium text-neutral-700 sm:px-3 sm:py-2.5 sm:text-xs"
+                className="min-w-0 border-l border-neutral-200 bg-neutral-50 px-0.5 py-1.5 text-left text-[11px] font-medium text-neutral-700 sm:px-1.5 sm:py-2.5"
               >
                 <span className="block truncate">{member.displayName}</span>
               </th>
@@ -184,41 +184,41 @@ export function DashboardMonthTable({
 
             return (
               <Fragment key={date}>
+                {notes.length > 0 ? (
+                  <tr className={`border-t border-neutral-200 ${surface}`}>
+                    <td colSpan={members.length + 1} className="p-0">
+                      <div className="sticky left-0 w-[100cqw] max-w-full px-1 py-1">
+                        <div className="rounded-md border border-neutral-200 bg-white px-2 py-1 shadow-sm">
+                          <div className="space-y-0.5">
+                            {notes.map((note, index) => (
+                              <p
+                                key={`${note}-${index}`}
+                                className="break-words text-[10px] font-normal leading-snug text-neutral-600 sm:text-[11px]"
+                              >
+                                {note}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
                 <tr className={`border-t border-neutral-200 ${surface}`}>
                   <th
                     scope="row"
-                    className={`sticky left-0 z-10 px-1 text-left font-medium text-neutral-700 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] sm:px-3 ${surface}`}
+                    className={`sticky left-0 z-10 max-w-[var(--date-col)] overflow-hidden px-0.5 text-left font-medium text-neutral-700 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] ${surface}`}
                   >
-                    <div
-                      className={`flex flex-col justify-center ${
-                        notes.length > 0
-                          ? "h-11 sm:h-auto sm:min-h-14 sm:py-1.5"
-                          : "h-11 sm:h-14"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-0.5">
-                        <span className="flex min-w-0 flex-col leading-tight sm:flex-row sm:items-baseline sm:gap-1.5">
-                          <span className="tabular-nums sm:inline-block sm:w-6 sm:text-right">
-                            {dayOfMonth(date)}
-                          </span>
-                          <span className="truncate text-[10px] font-normal text-neutral-500 sm:text-xs">
+                    <div className="flex h-11 items-center sm:h-14">
+                      <div className="flex w-full items-center justify-between gap-px">
+                        <span className="flex min-w-0 flex-col leading-none">
+                          <span className="tabular-nums">{dayOfMonth(date)}</span>
+                          <span className="truncate text-[9px] font-normal text-neutral-500">
                             {isToday ? "Today" : weekdayShort(date)}
                           </span>
                         </span>
                         {dateAccessory?.(date)}
                       </div>
-                      {notes.length > 0 ? (
-                        <div className="mt-0.5 hidden space-y-0.5 sm:block">
-                          {notes.map((note, index) => (
-                            <p
-                              key={`${note}-${index}`}
-                              className="break-words text-[11px] font-normal leading-snug text-neutral-500"
-                            >
-                              {note}
-                            </p>
-                          ))}
-                        </div>
-                      ) : null}
                     </div>
                   </th>
                   {members.map((member) => (
@@ -233,25 +233,6 @@ export function DashboardMonthTable({
                     </td>
                   ))}
                 </tr>
-                {notes.length > 0 ? (
-                  <tr className={`sm:hidden ${surface}`}>
-                    <td
-                      colSpan={members.length + 1}
-                      className="px-2 pb-1.5 pt-0"
-                    >
-                      <div className="space-y-0.5">
-                        {notes.map((note, index) => (
-                          <p
-                            key={`${note}-${index}`}
-                            className="break-words text-[10px] font-normal leading-snug text-neutral-500"
-                          >
-                            {note}
-                          </p>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ) : null}
               </Fragment>
             );
           })}
@@ -260,14 +241,14 @@ export function DashboardMonthTable({
           <tr className="border-t border-neutral-300 bg-rose-50">
             <th
               scope="row"
-              className="sticky left-0 z-10 bg-rose-50 px-1 py-2 text-left text-[10px] font-medium uppercase tracking-wide text-rose-800 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] sm:px-3 sm:py-2.5 sm:text-[11px] sm:tracking-wider"
+              className="sticky left-0 z-10 max-w-[var(--date-col)] overflow-hidden bg-rose-50 px-0.5 py-2 text-left text-[9px] font-medium uppercase tracking-tight text-rose-800 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] sm:py-2.5 sm:text-[10px]"
             >
               Penalty
             </th>
             {members.map((member, index) => (
               <td
                 key={member.id}
-                className="min-w-0 border-l border-rose-200 px-1 py-2 text-right text-[11px] font-medium tabular-nums text-rose-900 sm:px-3 sm:py-2.5 sm:text-sm"
+                className="min-w-0 border-l border-rose-200 px-0.5 py-2 text-right text-[11px] font-medium tabular-nums text-rose-900 sm:px-1.5 sm:py-2.5"
               >
                 <span className="block truncate">{footerValues[index]}</span>
               </td>

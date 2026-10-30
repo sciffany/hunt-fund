@@ -42,7 +42,7 @@ export function RefreshSleepNightButton({
     >
       <span
         aria-hidden
-        className={`inline-block text-sm leading-none ${
+        className={`inline-block text-xs leading-none ${
           isPending ? "animate-spin" : ""
         }`}
       >

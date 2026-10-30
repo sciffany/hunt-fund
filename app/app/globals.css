@@ -17,14 +17,20 @@ body {
   font-family: ui-sans-serif, system-ui, sans-serif;
 }
 
-/* Phones: a group of three should show every person's column without sideways scrolling. */
+/* Date column stays narrow. Phones squeeze it further so four or five people fit. */
+.dashboard-month-table {
+  --date-col: 3.25rem;
+  --member-col: 4rem;
+}
+
 @media (max-width: 639px) {
+  .dashboard-month-table {
+    --date-col: 2.75rem;
+    --member-col: 3.75rem;
+  }
+
   .dashboard-month-table[data-fit="true"] {
     width: 100% !important;
     min-width: 0 !important;
-  }
-
-  .dashboard-month-table[data-fit="true"] col.dashboard-date-col {
-    width: 4rem !important;
   }
 }

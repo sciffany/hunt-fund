@@ -184,6 +184,26 @@ export function DashboardMonthTable({
 
             return (
               <Fragment key={date}>
+                {notes.length > 0 ? (
+                  <tr className={`border-t border-neutral-200 ${surface}`}>
+                    <td colSpan={members.length + 1} className="p-0">
+                      <div className="sticky left-0 w-[100cqw] max-w-full px-1 py-1">
+                        <div className="rounded-md border border-neutral-200 bg-white px-2 py-1 shadow-sm">
+                          <div className="space-y-0.5">
+                            {notes.map((note, index) => (
+                              <p
+                                key={`${note}-${index}`}
+                                className="break-words text-[10px] font-normal leading-snug text-neutral-600 sm:text-[11px]"
+                              >
+                                {note}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
                 <tr className={`border-t border-neutral-200 ${surface}`}>
                   <th
                     scope="row"
@@ -213,22 +233,6 @@ export function DashboardMonthTable({
                     </td>
                   ))}
                 </tr>
-                {notes.length > 0 ? (
-                  <tr className={surface}>
-                    <td colSpan={members.length + 1} className="p-0">
-                      <div className="sticky left-0 w-[100cqw] max-w-full space-y-0.5 px-2 pb-1.5 pt-0">
-                        {notes.map((note, index) => (
-                          <p
-                            key={`${note}-${index}`}
-                            className="break-words text-[10px] font-normal leading-snug text-neutral-500 sm:text-[11px]"
-                          >
-                            {note}
-                          </p>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ) : null}
               </Fragment>
             );
           })}

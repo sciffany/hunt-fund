@@ -321,10 +321,13 @@ model WorkArrivalOverride {
   /// Minutes from local midnight, 0–1439.
   arrivalMinutes Int
   note           String?
+  /// When true, this day is exempt from tracking and penalties (e.g., sick leave).
+  exempt         Boolean     @default(false)
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
   @@unique([groupMemberId, date])
+  @@index([exempt], map: "WorkArrivalOverride_exempt_idx")
 }
 
 model WorkArrivalPenalty {

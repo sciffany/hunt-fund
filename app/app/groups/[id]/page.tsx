@@ -201,6 +201,7 @@ function arrivalDateNotes(
       date: Date;
       arrivalMinutes: number;
       note: string | null;
+      exempt: boolean;
     }[];
   }[],
   dates: string[],
@@ -248,8 +249,12 @@ function arrivalDateNotes(
     for (const override of member.workArrivalOverrides) {
       const date = formatDateOnly(override.date);
       if (!visible.has(date)) continue;
-      const time = formatArrivalMinutes(override.arrivalMinutes);
       const note = override.note?.trim();
+      if (override.exempt) {
+        push(date, name, note ? `Exempt · ${note}` : "Exempt");
+        continue;
+      }
+      const time = formatArrivalMinutes(override.arrivalMinutes);
       push(date, name, note ? `${note} · ${time}` : `Arrive by ${time}`);
     }
   }
@@ -369,6 +374,7 @@ export default async function GroupPage({
               timezone: true,
               arrivalMinutes: true,
               note: true,
+              exempt: true,
             },
           },
           workArrivalPenalties: {
@@ -611,7 +617,13 @@ export default async function GroupPage({
                   cells: Object.fromEntries(
                     dates.map((date) => [
                       date,
-                      { time: null, miss: false, late: false, penaltyLabel: null },
+                      {
+                        time: null,
+                        miss: false,
+                        late: false,
+                        penaltyLabel: null,
+                        exempt: false,
+                      },
                     ]),
                   ),
                   totalPenalty: "—",
@@ -637,6 +649,7 @@ export default async function GroupPage({
               date: formatDateOnly(override.date),
               timezone: override.timezone,
               arrivalMinutes: override.arrivalMinutes,
+              exempt: override.exempt,
             }));
             const penalties = member.workArrivalPenalties.map((penalty) => ({
               effectiveFrom: formatDateOnly(penalty.effectiveFrom),
@@ -676,6 +689,7 @@ export default async function GroupPage({
                       miss: cell.miss,
                       late: cell.late,
                       penaltyLabel: cell.charge,
+                      exempt: cell.exempt,
                     },
                   ]),
                 ),

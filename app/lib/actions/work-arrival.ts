@@ -17,6 +17,7 @@ import {
 } from "@/lib/sleep";
 import { requireOnboardedUser } from "@/lib/session";
 import {
+  DEFAULT_ARRIVAL_MINUTES,
   checkInFeedback,
   checklistFromWeekdays,
   earlierCheckIn,
@@ -168,6 +169,7 @@ export async function saveWorkArrivalOverride(
   const overrideId = String(formData.get("overrideId") ?? "").trim();
   const timezone = String(formData.get("timezone") ?? "").trim();
   const note = String(formData.get("note") ?? "").trim() || null;
+  const exempt = formData.get("exempt") === "true";
 
   const group = await requireOwnedGroup(user.id, groupId);
   if (!group) return { error: "You can’t edit this group." };
@@ -183,10 +185,16 @@ export async function saveWorkArrivalOverride(
   if (!date) return { error: "Enter a valid work day." };
   if (!isValidTimeZone(timezone)) return { error: "Choose a valid timezone." };
 
-  const arrivalMinutes = parseArrivalMinutes(formData.get("arrivalTime"));
-  if (arrivalMinutes === null) return { error: "Enter an arrival time." };
+  let arrivalMinutes: number;
+  if (exempt) {
+    arrivalMinutes = DEFAULT_ARRIVAL_MINUTES;
+  } else {
+    const parsed = parseArrivalMinutes(formData.get("arrivalTime"));
+    if (parsed === null) return { error: "Enter an arrival time." };
+    arrivalMinutes = parsed;
+  }
 
-  const data = { date, timezone, arrivalMinutes, note };
+  const data = { date, timezone, arrivalMinutes, note, exempt };
 
   try {
     if (overrideId) {
@@ -210,7 +218,14 @@ export async function saveWorkArrivalOverride(
   }
 
   revalidateGroup(groupId);
-  return { success: overrideId ? "Override saved." : "Override added." };
+  const success = exempt
+    ? overrideId
+      ? "Exemption saved."
+      : "Exemption added."
+    : overrideId
+      ? "Override saved."
+      : "Override added.";
+  return { success };
 }
 
 export async function deleteWorkArrivalOverride(formData: FormData) {

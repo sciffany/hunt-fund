@@ -241,6 +241,7 @@ export default async function GroupSettingsPage({
             timezone: override.timezone,
             arrivalMinutes: override.arrivalMinutes,
             note: override.note,
+            exempt: override.exempt,
           })),
           penalties: member.workArrivalPenalties.map((penalty) => ({
             id: penalty.id,

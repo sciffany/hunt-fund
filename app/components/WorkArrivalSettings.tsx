@@ -69,6 +69,7 @@ export type WorkArrivalOverrideView = {
   timezone: string;
   arrivalMinutes: number;
   note: string | null;
+  exempt: boolean;
 };
 
 export type WorkArrivalPenaltyView = {
@@ -278,6 +279,7 @@ function OverrideForm({
   defaultDate: string;
 }) {
   const [state, action, pending] = useActionState(saveWorkArrivalOverride, {});
+  const [exempt, setExempt] = useState(override?.exempt ?? false);
 
   return (
     <div className="flex min-w-0 flex-col space-y-3 rounded-md border border-neutral-200 bg-neutral-50 p-3">
@@ -288,6 +290,17 @@ function OverrideForm({
         <p className="text-sm font-medium">
           {override ? "Work day override" : "Add a work day override"}
         </p>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="exempt"
+            value="true"
+            checked={exempt}
+            onChange={(event) => setExempt(event.target.checked)}
+            className="mt-0.5"
+          />
+          <span>Exempt from tracking (e.g., sick leave, vacation)</span>
+        </label>
         <label className="block text-sm">
           Work day
           <input
@@ -306,21 +319,33 @@ function OverrideForm({
             timeZones={timeZones}
           />
         </label>
-        <label className="block text-sm">
-          Arrive by
-          <input
-            type="time"
-            name="arrivalTime"
-            required
-            defaultValue={formatArrivalInput(
-              override?.arrivalMinutes ?? DEFAULT_ARRIVAL_MINUTES,
-            )}
-            className={inputClass}
-          />
-        </label>
+        {exempt ? null : (
+          <label className="block text-sm">
+            Arrive by
+            <input
+              type="time"
+              name="arrivalTime"
+              required
+              defaultValue={formatArrivalInput(
+                override?.arrivalMinutes ?? DEFAULT_ARRIVAL_MINUTES,
+              )}
+              className={inputClass}
+            />
+          </label>
+        )}
         <label className="block text-sm">
           Note <span className="text-neutral-500">(optional)</span>
-          <input name="note" defaultValue={override?.note ?? ""} className={inputClass} />
+          <input
+            name="note"
+            defaultValue={override?.note ?? ""}
+            placeholder={exempt ? "e.g., Sick leave, Medical appointment" : undefined}
+            className={inputClass}
+          />
+          {exempt ? (
+            <span className="mt-1 block text-xs text-neutral-500">
+              Document the reason for exemption (sick leave, vacation, etc.)
+            </span>
+          ) : null}
         </label>
         <FieldMessage state={state} />
         <button type="submit" disabled={pending} className={`${primaryButtonClass} mt-auto`}>

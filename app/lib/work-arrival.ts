@@ -41,6 +41,8 @@ export type WorkArrivalOverrideForCharge = {
   date: string;
   timezone: string;
   arrivalMinutes: number;
+  /** When true, the day does not count for tracking or penalties. */
+  exempt?: boolean;
 };
 
 export type WorkArrivalPenaltyForCharge = {
@@ -65,6 +67,8 @@ export type WorkArrivalChargeCell = {
   /** True when the check-in is inside the place and after the target. */
   late: boolean;
   charge: string | null;
+  /** True when an override marks the day exempt from tracking and penalties. */
+  exempt: boolean;
 };
 
 export function defaultWorkdays(): WeekdayChecklist {
@@ -354,6 +358,7 @@ function dayCounts(
   target: WorkArrivalTargetForCharge | undefined,
   override: WorkArrivalOverrideForCharge | undefined,
 ): boolean {
+  if (override?.exempt) return false;
   if (override) return true;
   if (!target) return false;
   return target.days[weekdayOfDate(date)];
@@ -486,6 +491,9 @@ export function chargeWorkArrivalMonth(input: {
         ? formatTimeInZone(charged.arrivedAt, charged.timezone)
         : null;
     const owes = charged.miss || charged.late;
+    const exempt = input.overrides.some(
+      (entry) => entry.date === date && entry.exempt === true,
+    );
     cells[date] = {
       time,
       miss: charged.miss,
@@ -493,6 +501,7 @@ export function chargeWorkArrivalMonth(input: {
       charge: owes
         ? formatPenaltyCharge(charged.cents, penalty?.unit, penalty?.unitLabel)
         : null,
+      exempt,
     };
   }
 

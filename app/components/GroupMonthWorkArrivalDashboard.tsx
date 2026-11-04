@@ -21,6 +21,7 @@ export type WorkArrivalDashboardCell = {
   miss: boolean;
   late: boolean;
   penaltyLabel: string | null;
+  exempt: boolean;
 };
 
 export type WorkArrivalDashboardMember = {
@@ -233,12 +234,15 @@ export function GroupMonthWorkArrivalDashboard({
         renderCell={(memberId, date) => {
           const cell = memberById.get(memberId)?.cells[date];
           const flagged = Boolean(cell?.miss || cell?.late);
-          const value = cell?.time ?? (cell?.miss ? "Miss" : null);
+          const exempt = Boolean(cell?.exempt);
+          const value =
+            cell?.time ?? (exempt ? "Exempt" : cell?.miss ? "Miss" : null);
           return (
             <DashboardMetricCell
               value={value}
               flagged={flagged}
               penaltyLabel={cell?.penaltyLabel ?? null}
+              className={exempt && !flagged ? "bg-neutral-100" : ""}
             />
           );
         }}

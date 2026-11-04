@@ -12,6 +12,7 @@ import {
   isInsideRadius,
   parseLatitude,
   workDayForArrival,
+  type WorkArrivalOverrideForCharge,
   type WorkArrivalPenaltyForCharge,
   type WorkArrivalTargetForCharge,
 } from "@/lib/work-arrival";
@@ -53,7 +54,7 @@ function at(minutes: number, extraMs = 0): Date {
 function charge(input: {
   date?: string;
   targets?: WorkArrivalTargetForCharge[];
-  overrides?: { date: string; timezone: string; arrivalMinutes: number }[];
+  overrides?: WorkArrivalOverrideForCharge[];
   penalties?: WorkArrivalPenaltyForCharge[];
   checkIn?: { arrivedAt: Date; latitude: number; longitude: number } | null;
 }) {
@@ -74,6 +75,7 @@ test("an unchecked weekday owes nothing, including when nobody checks in", () =>
     miss: false,
     late: false,
     charge: null,
+    exempt: false,
   });
   expect(result.totalCharge).toBe("$0.00");
 });
@@ -85,6 +87,7 @@ test("a missing check-in on a counted day owes the cap", () => {
     miss: true,
     late: false,
     charge: "$5.00",
+    exempt: false,
   });
 });
 
@@ -107,6 +110,7 @@ test("a counted day after today owes nothing until it arrives", () => {
     miss: false,
     late: false,
     charge: null,
+    exempt: false,
   });
   expect(result.totalCharge).toBe("$5.00");
 });
@@ -197,6 +201,128 @@ test("an override makes an unchecked day count and replaces the clock time", () 
     late: false,
     charge: null,
   });
+});
+
+test("an exempt override owes nothing, including a missing check-in", () => {
+  const result = charge({
+    overrides: [
+      {
+        date: DAY,
+        timezone: "Asia/Singapore",
+        arrivalMinutes: 9 * 60,
+        exempt: true,
+      },
+    ],
+    checkIn: null,
+  });
+  expect(result.cells[DAY]).toEqual({
+    time: null,
+    miss: false,
+    late: false,
+    charge: null,
+    exempt: true,
+  });
+  expect(result.totalCharge).toBe("$0.00");
+});
+
+test("a check-in on an exempt day is recorded and not charged", () => {
+  const result = charge({
+    overrides: [
+      {
+        date: DAY,
+        timezone: "Asia/Singapore",
+        arrivalMinutes: 9 * 60,
+        exempt: true,
+      },
+    ],
+    checkIn: { arrivedAt: at(11 * 60), ...PLACE },
+  });
+  expect(result.cells[DAY]).toEqual({
+    time: "11:00 AM",
+    miss: false,
+    late: false,
+    charge: null,
+    exempt: true,
+  });
+  expect(result.totalCharge).toBe("$0.00");
+});
+
+test("clearing exempt makes the day count again", () => {
+  const exempt = charge({
+    overrides: [
+      {
+        date: DAY,
+        timezone: "Asia/Singapore",
+        arrivalMinutes: 9 * 60,
+        exempt: true,
+      },
+    ],
+    checkIn: null,
+  });
+  const counted = charge({
+    overrides: [
+      {
+        date: DAY,
+        timezone: "Asia/Singapore",
+        arrivalMinutes: 9 * 60,
+        exempt: false,
+      },
+    ],
+    checkIn: null,
+  });
+  expect(exempt.cells[DAY].charge).toBeNull();
+  expect(counted.cells[DAY]).toMatchObject({
+    miss: true,
+    charge: "$5.00",
+    exempt: false,
+  });
+});
+
+test("an exempt day is left out of the monthly penalty total", () => {
+  const next = "2026-10-28";
+  const result = chargeWorkArrivalMonth({
+    dates: [DAY, next],
+    targets: [target()],
+    overrides: [
+      {
+        date: DAY,
+        timezone: "Asia/Singapore",
+        arrivalMinutes: 9 * 60,
+        exempt: true,
+      },
+    ],
+    penalties: [penalty()],
+    checkInByWorkDay: new Map([
+      [DAY, null],
+      [next, null],
+    ]),
+  });
+  expect(result.cells[DAY].exempt).toBe(true);
+  expect(result.cells[DAY].charge).toBeNull();
+  expect(result.cells[next]).toMatchObject({ miss: true, charge: "$5.00", exempt: false });
+  expect(result.totalCharge).toBe("$5.00");
+});
+
+test("an exempt override on a weekend still does not count", () => {
+  const sunday = "2026-10-25";
+  const result = charge({
+    date: sunday,
+    overrides: [
+      {
+        date: sunday,
+        timezone: "Asia/Singapore",
+        arrivalMinutes: 9 * 60,
+        exempt: true,
+      },
+    ],
+    checkIn: null,
+  });
+  expect(result.cells[sunday]).toMatchObject({
+    miss: false,
+    charge: null,
+    exempt: true,
+  });
+  expect(result.totalCharge).toBe("$0.00");
 });
 
 test("an override still uses the target place", () => {
